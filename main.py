@@ -2,48 +2,65 @@ from omegaconf import OmegaConf
 from argparse import ArgumentParser
 import numpy as np
 import pickle
+from inertia import inertia
+import pandas as pd
+from dask.distributed import Client
+import dask.array as da
+import dask
+from dask_cuda import LocalCUDACluster
 
 def main(config):
+    # create dask client
+    cluster=LocalCUDACluster()
+    client=Client()
+
+    BASE_PATH = "/home/luke/Documents/metrics"
+    CLUSTER_SET="4_level_skyline_5_cat"
+
     # load the embeddings
-    embeddings_path="/home/luke/Documents/metrics/skyline_embeddings_64.npy"
+    embeddings_path=f'/home/luke/Documents/metrics/skyline_embeddings_64.npy'
     embeddings = np.load(embeddings_path)
 
     # construct an object which denotes the structure of the hierarchy, with embedding indices
     hierarchy = []
 
-    # get embedding values and cluster values
-    CLUSTER_SET = '4_level_skyline_5_cat'
-    BASE_PATH = "."
-    for LEVEL in range(config.n_levels):
-        NUM_CLUSTERS = config.n_clusters[LEVEL]
-        LEVEL += 1
-        # keep track of clusters in current level
-        curr_level_clusters = []
+    previous_level_clusters = np.load(f'{BASE_PATH}/{CLUSTER_SET}/level1/sorted_clusters.npy', allow_pickle=True)
+
+    for LEVEL in range(1, config.n_levels + 1):
+        # clusters in the current level
         clusters = np.load(f'{BASE_PATH}/{CLUSTER_SET}/level{LEVEL}/sorted_clusters.npy', allow_pickle=True)
-        for CLUSTER in range(NUM_CLUSTERS):
 
-            # get the current cluster in the initial level: corresponds to centroids in previous levels unless LEVEL == 1
-            cluster_indices = clusters[CLUSTER]
+        # get the centroids for the current level
+        centroids = np.load(f'{BASE_PATH}/{CLUSTER_SET}/level{LEVEL}/centroids.npy', allow_pickle=True)
 
-            # convert these indices to actual embeddings
-            while LEVEL > 1:
-                indices = np.array([])
-                previous_level_clusters = np.load(f'{BASE_PATH}/{CLUSTER_SET}/level{LEVEL - 1}/sorted_clusters.npy', allow_pickle=True)
-                for centroid_index in cluster_indices:
-                    # grab the corresponding cluster in the previous level and flatten the indices
-                    indices = np.concatenate((indices, previous_level_clusters[int(centroid_index)]))
-                LEVEL -= 1
-                cluster_indices = indices.astype(int)
-            curr_level_clusters.append(cluster_indices)
-        
-        # get the centroids for the current cluster
-        centroids = np.load(f'{BASE_PATH}/{CLUSTER_SET}/level{LEVEL}/centroids.npy')
-        hierarchy.append({'centroids': centroids, 'clusters': curr_level_clusters, 'level': LEVEL})
+        # if the level isn't the first one, get the cluster indices from the previous level and flatten them
+        curr_level_clusters = []
+
+        if LEVEL != 1:
+            for c in range(cfg.n_clusters[LEVEL - 1]):
+                this_cluster = np.empty((0,768))
+                for prev_cluster_idx in clusters[c]:
+                    curr_prev_cluster = previous_level_clusters[prev_cluster_idx][1]
+                    this_cluster = np.append(this_cluster, curr_prev_cluster, axis=0)
+                curr_level_clusters.append([centroids[c], this_cluster])
+        else:
+            for c in range(cfg.n_clusters[LEVEL - 1]):
+                this_cluster = np.array(embeddings[clusters[c]])
+                curr_level_clusters.append([centroids[c], this_cluster]) #get_cluster(c, clusters[c], centroids, embeddings))
+        previous_level_clusters = curr_level_clusters
+
+        hierarchy.append({'clusters': curr_level_clusters, 'level': LEVEL})
         
     # calculate the statistics we want
-    print(len(hierarchy[0]["clusters"]))
-            
+    # print(inertia(hierarchy[1]['clusters'][0]))
 
+    # result = client.submit(inertia, hierarchy[2]['clusters'][0])
+    # print("!!!!!-----------------------------------------------------------------------------------------------------------------------------")
+    # print(result.result())
+    # print("!!!!!-----------------------------------------------------------------------------------------------------------------------------")
+
+    a = client.map(inertia, hierarchy[3]['clusters'][:])
+    print(client.gather(a))
 
 
 if __name__=="__main__":
