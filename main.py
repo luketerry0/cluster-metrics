@@ -8,9 +8,12 @@ import math
 from metrics import inertia, simplified_silhouette
 import pickle
 
-def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, WORLD_SIZE):
+def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS):
     # initialize a process group
-    dist.init_process_group(backend="nccl", init_method="tcp://localhost:29500", rank=0, world_size=WORLD_SIZE)
+    world_size = int(os.environ["WORLD_SIZE"])
+    # the 'rank' of the current process, a unique id for the current gpu
+    rank = int(os.environ["RANK"])
+    dist.init_process_group(backend="nccl", rank=rank, world_size=WORLD_SIZE)
 
 
     # load the embeddings
@@ -85,5 +88,5 @@ if __name__=="__main__":
         OmegaConf.from_cli(opts),
     )
 
-    main(cfg, args.base_path, args.cluster_set, args.path_to_stored_metrics, args.world_size)
+    main(cfg, args.base_path, args.cluster_set, args.path_to_stored_metrics)
     dist.destroy_process_group()

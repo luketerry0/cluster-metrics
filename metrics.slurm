@@ -12,8 +12,8 @@
 # memory (RAM) you will use on each machine.  Provide an upper bound, this is not enforced
 #SBATCH --mem=64G
 # Where you would like your stdout and stderr to appear
-#SBATCH --output=/home/you/OUAI_Demo/out.txt
-#SBATCH --error=/home/you/OUAI_Demo/err.txt
+#SBATCH --output=/ourdisk/hpc/ai2es/luketerry/cluster-metrics/logs/out.txt
+#SBATCH --error=/ourdisk/hpc/ai2es/luketerry/cluster-metrics/logs/err.txt
 # The maximum time your job can take (most partitions limit this)
 #SBATCH --time=24:00:00
 # job name which will appear in queue
@@ -22,7 +22,7 @@
 #SBATCH --mail-user=luke.h.terry-1@ou.edu
 #SBATCH --mail-type=ALL
 # the working directory for your job.  This must exist.
-#SBATCH --chdir=/home/you/OUAI_Demo/
+#SBATCH --chdir=/ourdisk/hpc/ai2es/luketerry/cluster-metrics/
 #################################################
 
 # this is how we get the ip address of the node that will be used for the master process
@@ -36,7 +36,7 @@ echo Node IP: $head_node_ip
 # using Dr. Fagg's conda setup script
 . /home/fagg/tf_setup.sh
 # activating a version of my environment
-conda activate /home/jroth/.conda/envs/mct
+conda activate /home/luketerry/miniforge3/envs/ssl-data-curation
 
 # launching a run that will be executed over multiple compute nodes
 srun torchrun \
@@ -46,8 +46,8 @@ srun torchrun \
 --rdzv_backend c10d \
 --rdzv_endpoint "$head_node_ip:64425" \
 main.py \
---config_file="" \
+--config_file="/ourdisk/hpc/ai2es/luketerry/4_level_skyline_exp/config.yaml" \
 --world_size=$SLURM_JOB_NUM_NODES \
---cluster_set="" \
---path_to_stored_metrics="" \
---base_path
+--cluster_set="4_level_skyline_exp" \
+--path_to_stored_metrics="/ourdisk/hpc/ai2es/luketerry/cluster-metrics/outputs" \
+--base_path="/ourdisk/hpc/ai2es/luketerry/cluster-metrics"
