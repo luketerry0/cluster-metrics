@@ -5,7 +5,8 @@ from argparse import ArgumentParser
 import numpy as np
 import os
 import math
-from inertia import inertia
+from metrics import inertia, simplified_silhouette
+import pickle
 
 def main(config):
     # initialize a process group
@@ -14,9 +15,10 @@ def main(config):
 
     BASE_PATH = "/home/luke/Documents/metrics"
     CLUSTER_SET="4_level_skyline_5_cat"
+    PATH_TO_STORED_METRICS="/home/luke/Documents/metrics/outputs"
 
     # load the embeddings
-    embeddings_path=f'/home/luke/Documents/metrics/skyline_embeddings_64.npy'
+    embeddings_path=f'{BASE_PATH}/skyline_embeddings_64.npy'
     embeddings=np.load(embeddings_path, mmap_mode="r")
 
     for LEVEL in range(1, config.n_levels + 1):
@@ -48,7 +50,25 @@ def main(config):
         # print(len(curr_level_clusters))
 
         # calculate the inertia of this level's clusters
-        inertia(centroids, curr_level_clusters)
+        inertia_tensor = inertia(centroids, curr_level_clusters)
+        inertia_path = f'{PATH_TO_STORED_METRICS}/{CLUSTER_SET}/level{LEVEL}/'
+        if not os.path.exists(inertia_path):
+            os.makedirs(inertia_path)
+        with open(inertia_path + 'inertia.pickle', 'wb') as file:
+            pickle.dump(inertia_tensor, file, protocol=pickle.HIGHEST_PROTOCOL)
+        
+        print(f'Inertias calculated for level {LEVEL}')
+
+        # calculate the simplified silhouette coefficients of this clustering
+        silhouette_tensor = simplified_silhouette(centroids, curr_level_clusters)
+        silhouette_path = f'{PATH_TO_STORED_METRICS}/{CLUSTER_SET}/level{LEVEL}/'
+        if not os.path.exists(silhouette_path):
+            os.makedirs(silhouette_path)
+        with open(silhouette_path +'silhouette_coefficients.pickle', 'wb') as file:
+            pickle.dump(silhouette_tensor, file, protocol=pickle.HIGHEST_PROTOCOL)
+
+        print(f'Silhouettes calculated for level {LEVEL}')
+
 
 
 if __name__=="__main__":
