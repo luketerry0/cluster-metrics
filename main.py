@@ -8,14 +8,10 @@ import math
 from metrics import inertia, simplified_silhouette
 import pickle
 
-def main(config):
+def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, WORLD_SIZE):
     # initialize a process group
-    WORLD_SIZE=1
     dist.init_process_group(backend="nccl", init_method="tcp://localhost:29500", rank=0, world_size=WORLD_SIZE)
 
-    BASE_PATH = "/home/luke/Documents/metrics"
-    CLUSTER_SET="4_level_skyline_5_cat"
-    PATH_TO_STORED_METRICS="/home/luke/Documents/metrics/outputs"
 
     # load the embeddings
     embeddings_path=f'{BASE_PATH}/skyline_embeddings_64.npy'
@@ -74,6 +70,12 @@ def main(config):
 if __name__=="__main__":
     parser = ArgumentParser()
     parser.add_argument("--config_file", type=str, help="Path to config file", default="./4_level_skyline_5_cat/config.yaml")
+    parser.add_argument("--world_size", type=int, help="Path to config file", default="1")
+    parser.add_argument("--cluster_set", type=str, help="Path to config file", default="4_level_skyline_5_cat")
+    parser.add_argument("--path_to_stored_metrics", type=str, help="Path to config file", default="/home/luke/Documents/metrics/outputs")
+    parser.add_argument("--base_path", type=str, help="Path to config file", default="/home/luke/Documents/metrics")
+
+
     args, opts = parser.parse_known_args()
 
     cfg = OmegaConf.load(args.config_file)
@@ -83,5 +85,5 @@ if __name__=="__main__":
         OmegaConf.from_cli(opts),
     )
 
-    main(cfg)
+    main(cfg, args.base_path, args.cluster_set, args.path_to_stored_metrics, args.world_size)
     dist.destroy_process_group()
