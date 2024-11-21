@@ -7,17 +7,20 @@ import os
 import math
 from metrics import inertia, simplified_silhouette
 import pickle
+from datetime import timedelta
 
 def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS):
     # initialize a process group
     world_size = int(os.environ["WORLD_SIZE"])
     # the 'rank' of the current process, a unique id for the current gpu
     rank = int(os.environ["RANK"])
-    dist.init_process_group(backend="nccl", rank=rank, world_size=WORLD_SIZE)
+    # print(rank)
+    torch.cuda.set_device(rank % torch.cuda.device_count())
+    dist.init_process_group(backend="nccl", rank=rank, world_size=world_size,  timeout=timedelta(minutes=60))
 
 
     # load the embeddings
-    embeddings_path=f'{BASE_PATH}/skyline_embeddings_64.npy'
+    embeddings_path=f'/home/luketerry/ssl-data-curation/npy_data/skyline_embeddings_64.npy'
     embeddings=np.load(embeddings_path, mmap_mode="r")
 
     for LEVEL in range(1, config.n_levels + 1):
@@ -51,22 +54,28 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS):
         # calculate the inertia of this level's clusters
         inertia_tensor = inertia(centroids, curr_level_clusters)
         inertia_path = f'{PATH_TO_STORED_METRICS}/{CLUSTER_SET}/level{LEVEL}/'
-        if not os.path.exists(inertia_path):
-            os.makedirs(inertia_path)
-        with open(inertia_path + 'inertia.pickle', 'wb') as file:
-            pickle.dump(inertia_tensor, file, protocol=pickle.HIGHEST_PROTOCOL)
+        np_inertia = inertia_tensor.to(device="cpu").numpy()
+        del inertia_tensor
+        if rank == 0:
+            if not os.path.exists(inertia_path):
+                os.makedirs(inertia_path)
+            with open(inertia_path + 'inertia.npy', 'wb') as file:
+                np.save(file, np_inertia)
         
         print(f'Inertias calculated for level {LEVEL}')
 
-        # calculate the simplified silhouette coefficients of this clustering
-        silhouette_tensor = simplified_silhouette(centroids, curr_level_clusters)
-        silhouette_path = f'{PATH_TO_STORED_METRICS}/{CLUSTER_SET}/level{LEVEL}/'
-        if not os.path.exists(silhouette_path):
-            os.makedirs(silhouette_path)
-        with open(silhouette_path +'silhouette_coefficients.pickle', 'wb') as file:
-            pickle.dump(silhouette_tensor, file, protocol=pickle.HIGHEST_PROTOCOL)
+        # # calculate the simplified silhouette coefficients of this clustering
+        # silhouette_tensor = simplified_silhouette(centroids, curr_level_clusters)
+        # silhouette_path = f'{PATH_TO_STORED_METRICS}/{CLUSTER_SET}/level{LEVEL}/'
+        # np_silhouette = silhouette_tensor.to(device="cpu").numpy()
+        # del silhouette_tensor
+        # if rank == 0:
+        #     if not os.path.exists(silhouette_path):
+        #         os.makedirs(silhouette_path)
+        #     with open(silhouette_path +'silhouette_coefficients.npy', 'wb') as file:
+        #         np.save(file, np_silhouette)
 
-        print(f'Silhouettes calculated for level {LEVEL}')
+        # print(f'Silhouettes calculated for level {LEVEL}')
 
 
 

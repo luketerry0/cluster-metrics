@@ -8,12 +8,12 @@
 # Thread count, or the number of hypercores you plan to use.  This is not enforced.
 #SBATCH --cpus-per-task=32
 # The number of gpus you require each node to have
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:2
 # memory (RAM) you will use on each machine.  Provide an upper bound, this is not enforced
 #SBATCH --mem=64G
 # Where you would like your stdout and stderr to appear
-#SBATCH --output=/ourdisk/hpc/ai2es/luketerry/cluster-metrics/logs/out.txt
-#SBATCH --error=/ourdisk/hpc/ai2es/luketerry/cluster-metrics/logs/err.txt
+#SBATCH --output=/ourdisk/hpc/ai2es/luketerry/cluster-metrics/new_logs/out-%j.txt
+#SBATCH --error=/ourdisk/hpc/ai2es/luketerry/cluster-metrics/new_logs/err-%j.txt
 # The maximum time your job can take (most partitions limit this)
 #SBATCH --time=24:00:00
 # job name which will appear in queue
@@ -38,6 +38,8 @@ echo Node IP: $head_node_ip
 # activating a version of my environment
 conda activate /home/luketerry/miniforge3/envs/ssl-data-curation
 
+trial="4_level_skyline_exp"
+
 # launching a run that will be executed over multiple compute nodes
 srun torchrun \
 --nnodes $SLURM_JOB_NUM_NODES \
@@ -46,8 +48,8 @@ srun torchrun \
 --rdzv_backend c10d \
 --rdzv_endpoint "$head_node_ip:64425" \
 main.py \
---config_file="/ourdisk/hpc/ai2es/luketerry/4_level_skyline_exp/config.yaml" \
+--config_file="/ourdisk/hpc/ai2es/luketerry/${trial}/config.yaml" \
 --world_size=$SLURM_JOB_NUM_NODES \
---cluster_set="4_level_skyline_exp" \
+--cluster_set="${trial}" \
 --path_to_stored_metrics="/ourdisk/hpc/ai2es/luketerry/cluster-metrics/outputs" \
---base_path="/ourdisk/hpc/ai2es/luketerry/cluster-metrics"
+--base_path="/ourdisk/hpc/ai2es/luketerry"

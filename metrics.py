@@ -9,7 +9,8 @@ def inertia(centroids, clusters):
 
     # calculate the inertias for nodes which belong to this rank
     print("calculating inertias")
-    for idx in tqdm(range(dist.get_rank(), len(centroids), dist.get_world_size())):
+    rank = dist.get_rank()
+    for idx in tqdm(range(rank, len(centroids), dist.get_world_size())):
         centroid = torch.unsqueeze(centroids[idx], 0).to(device="cuda")
         cluster = clusters[idx].to(device="cuda").double()
         inertia = torch.mean(torch.square(torch.cdist(centroid, cluster)))
@@ -17,7 +18,11 @@ def inertia(centroids, clusters):
         inertias[idx] = inertia
 
         # gather up the tensors
-        dist.gather(inertias[idx], [inertias[a] for a in range(idx, idx+dist.get_world_size())])
+        if rank == 0:
+            dist.gather(inertias[idx], [inertias[a] for a in range(idx, idx+min(dist.get_world_size(), len(centroids)))])
+        else:
+            dist.gather(inertias[idx])
+
 
         # clean up
         del centroid
@@ -78,7 +83,6 @@ def silhouette_coef(centroids, clusters):
     return silhouette_coef
 
 
-
 def simplified_silhouette(centroids, clusters):
 
     silhouette_coef = torch.zeros(1).to(device="cuda")
@@ -92,32 +96,36 @@ def simplified_silhouette(centroids, clusters):
         del centroid
 
         # calculate b' values
-        if (len(curr_cluster) > 1000):
+        block_size = 3000
+        if (len(curr_cluster) > block_size):
             # if the GPU can't handle a big cluster, process it in blocks
-            block_size = 1000
             running_b = torch.tensor([]).to(device="cuda")
+            print(f'CLUSTER LEN: {len(curr_cluster)}')
             for idx in range(0, len(curr_cluster) + 1, block_size):
                 bottom_of_range = idx
                 top_of_range = idx + block_size
                 if cluster_idx < top_of_range and cluster_idx > bottom_of_range:
                     other_centroids = torch.cat((centroids[bottom_of_range:cluster_idx], centroids[cluster_idx + 1:min(top_of_range, len(centroids[cluster_idx]))])).to(device="cuda")
                 else:
-                    other_centroids = centroids[bottom_of_range:top_of_range].to(device="cuda")
-                b = torch.min(torch.cdist(curr_cluster, other_centroids), dim=1, keepdim=True).values
-                del other_centroids
+                    other_centroids = torch.cat((centroids[bottom_of_range:cluster_idx], centroids[cluster_idx:top_of_range])).to(device="cuda") # necessary for unknown reasons...
+                pairwise_distances = torch.cdist(curr_cluster, other_centroids)
+                b = torch.min(pairwise_distances, dim=1, keepdim=True).values
                 running_b = torch.min(torch.cat((running_b, b), dim=1), dim=1, keepdim=True).values
                 del b
             b = running_b
+            del running_b
         else:
             other_centroids = torch.cat((centroids[:cluster_idx], centroids[cluster_idx + 1:])).to(device="cuda")
             b = torch.min(torch.cdist(curr_cluster, other_centroids), dim=1, keepdim=True).values
 
         # clean up a lil bit
         del curr_cluster
+        del other_centroids
+
 
         # calculate average s value for this cluster
         s_values = (b - a)/float(max(torch.cat((a, b))))
-        curr_sill_val = sum(s_values)/len(centroids)
+        curr_sill_val = sum(s_values)/len(s_values)
         if curr_sill_val > silhouette_coef:
             silhouette_coef = curr_sill_val
         
@@ -129,8 +137,12 @@ def simplified_silhouette(centroids, clusters):
     # gather up the max silhouette coef
     dist.reduce(silhouette_coef, 0, dist.ReduceOp.MAX)
 
-    return silhouette_coef
-    print(silhouette_coef)
+    return silhouette_coef/len(centroids)
+
+
+    
+    
+
 
 
     
