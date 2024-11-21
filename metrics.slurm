@@ -47,7 +47,13 @@ srun torchrun \
 --rdzv_endpoint "$head_node_ip:64425" \
 main.py \
 --config_file="/ourdisk/hpc/ai2es/luketerry/4_level_skyline_exp/config.yaml" \
+main.py \\
+--config_file="" \
 --world_size=$SLURM_JOB_NUM_NODES \
 --cluster_set="4_level_skyline_exp" \
 --path_to_stored_metrics="/ourdisk/hpc/ai2es/luketerry/cluster-metrics/outputs" \
 --base_path="/ourdisk/hpc/ai2es/luketerry/cluster-metrics"
+--cluster_set="" \
+--path_to_stored_metrics="" \
+--base_path="" \
+--embeddings_path="/home/luketerry/ssl-data-curation/npy_data/skyline_embeddings_64.npy"
