@@ -95,7 +95,7 @@ def simplified_silhouette(centroids, clusters):
         del centroid
 
         # calculate b' values
-        block_size = 100
+        block_size = 3000
         other_centroids = torch.cat((centroids[:cluster_idx], centroids[cluster_idx + 1:])).to(device="cuda")
         if (len(curr_cluster) > block_size):
             # if the GPU can't handle a big cluster, process it in blocks

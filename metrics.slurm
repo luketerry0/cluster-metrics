@@ -38,7 +38,7 @@ echo Node IP: $head_node_ip
 # activating a version of my environment
 conda activate /home/luketerry/miniforge3/envs/ssl-data-curation
 
-trial="4_level_skyline_exp"
+trial="$1" # something like "4_level_skyline_exp"
 
 # launching a run that will be executed over multiple compute nodes
 srun torchrun \
@@ -52,4 +52,5 @@ main.py \
 --world_size=$SLURM_JOB_NUM_NODES \
 --cluster_set="${trial}" \
 --path_to_stored_metrics="/ourdisk/hpc/ai2es/luketerry/cluster-metrics/outputs" \
---base_path="/ourdisk/hpc/ai2es/luketerry"
+--base_path="/ourdisk/hpc/ai2es/luketerry" \
+--embeddings_path="/home/luketerry/ssl-data-curation/npy_data/skyline_embeddings_64.npy"
