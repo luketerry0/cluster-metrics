@@ -4,6 +4,12 @@ import math
 import torch
 from tqdm import tqdm
 
+def print_mem_usage():
+    print("torch.cuda.memory_allocated: %fGB"%(torch.cuda.memory_allocated(0)/1024/1024/1024))
+    print("torch.cuda.memory_reserved: %fGB"%(torch.cuda.memory_reserved(0)/1024/1024/1024))
+    print("torch.cuda.max_memory_reserved: %fGB"%(torch.cuda.max_memory_reserved(0)/1024/1024/1024))
+
+
 def inertia(centroids, clusters):
     inertias = torch.zeros(len(centroids)).to(device="cuda")
 
@@ -137,6 +143,33 @@ def simplified_silhouette(centroids, clusters):
 
     return silhouette_coef
 
+# https://en.wikipedia.org/wiki/Davies%E2%80%93Bouldin_index
+def db_index(inertias, centroids):
+    #DB index is the average maxiumum (s_i + s_j)/mij for a cluster a and all other clusters b, where s_i or s_j is the square root of the silhouette, and d_ij is the distance between centroids
+    # this will use euclidean distance and standard deviation as measures...
+
+    # take the square roots of inertias
+    s = torch.sqrt(inertias)
+
+    # get the pairwise distances among centroids
+    m = torch.cdist(centroids, centroids).to(device="cuda")
+
+    # get pairwise sums of the average distance to the centroids
+    s_ij = s[:, None] + s
+    r_ij = torch.div(s_ij, m)
+
+    # calculate DB index
+    r_ij.fill_diagonal_(0)
+    d_i = torch.max(r_ij, dim=0).values
+    db = torch.mean(d_i)
+
+    del m 
+    del d_i
+    del s_ij
+    del r_ij
+    torch.cuda.empty_cache()
+
+    return db
 
     
     

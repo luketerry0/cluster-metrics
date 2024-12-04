@@ -5,7 +5,7 @@ from argparse import ArgumentParser
 import numpy as np
 import os
 import math
-from metrics import inertia, simplified_silhouette
+from metrics import inertia, simplified_silhouette, db_index
 import pickle
 
 def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS):
@@ -51,28 +51,33 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS):
         # print(len(curr_level_clusters))
 
         # calculate the inertia of this level's clusters
+        storage_path = f'{PATH_TO_STORED_METRICS}/{CLUSTER_SET}/level{LEVEL}/'
+
         inertia_tensor = inertia(centroids, curr_level_clusters)
-        np_inertia = inertia_tensor.cpu().numpy()
-        inertia_path = f'{PATH_TO_STORED_METRICS}/{CLUSTER_SET}/level{LEVEL}/'
-        if rank == 0:
-            if not os.path.exists(inertia_path):
-                os.makedirs(inertia_path)
-            with open(inertia_path + 'inertia.npy', 'wb') as file:
-                np.save(file, np_inertia)
+        if not os.path.exists(storage_path):
+            os.makedirs(storage_path)
+        with open(storage_path + 'inertia.pickle', 'wb') as file:
+            pickle.dump(inertia_tensor, file, protocol=pickle.HIGHEST_PROTOCOL)
         
         print(f'Inertias calculated for level {LEVEL}')
 
-        # calculate the simplified silhouette coefficients of this clustering
+        calculate the simplified silhouette coefficients of this clustering
         silhouette_tensor = simplified_silhouette(centroids, curr_level_clusters)
-        np_silhouette = silhouette_tensor.cpu().numpy()
-        silhouette_path = f'{PATH_TO_STORED_METRICS}/{CLUSTER_SET}/level{LEVEL}/'
-        if rank == 0:
-            if not os.path.exists(silhouette_path):
-                os.makedirs(silhouette_path)
-            with open(silhouette_path +'silhouette_coefficients.pickle', 'wb') as file:
-                np.save(file, np_silhouette)
+        with open(storage_path +'silhouette_coefficients.pickle', 'wb') as file:
+            pickle.dump(silhouette_tensor, file, protocol=pickle.HIGHEST_PROTOCOL)
 
         print(f'Silhouettes calculated for level {LEVEL}')
+        if LEVEL != 1:
+            db_tensor = db_index(inertia_tensor, centroids)
+            with open(storage_path +'db_index.pickle', 'wb') as file:
+                pickle.dump(silhouette_tensor, file, protocol=pickle.HIGHEST_PROTOCOL)
+
+        print(f'Davies-Bouldin Index calculated for level {LEVEL}')
+
+        # clean up
+        del inertia_tensor
+        
+
 
 
 
