@@ -9,7 +9,12 @@ def print_mem_usage():
     print("torch.cuda.memory_reserved: %fGB"%(torch.cuda.memory_reserved(0)/1024/1024/1024))
     print("torch.cuda.max_memory_reserved: %fGB"%(torch.cuda.max_memory_reserved(0)/1024/1024/1024))
 
+"""
+Calculates the inertia of this clustering
 
+centroids: a 2d tensor of the centroids
+clusters: a list of 2d tensors representing the contents of each cluster
+"""
 def inertia(centroids, clusters):
     inertias = torch.zeros(len(centroids)).to(device="cuda")
 
@@ -19,7 +24,7 @@ def inertia(centroids, clusters):
     for idx in tqdm(range(rank, len(centroids), dist.get_world_size())):
         centroid = torch.unsqueeze(centroids[idx], 0).to(device="cuda")
         cluster = clusters[idx].to(device="cuda").double()
-        inertia = torch.mean(torch.square(torch.cdist(centroid, cluster)))
+        inertia = torch.sum(torch.square(torch.cdist(centroid, cluster)))
 
         inertias[idx] = inertia
 
@@ -38,60 +43,67 @@ def inertia(centroids, clusters):
     return inertias
 
 # # see https://en.wikipedia.org/wiki/Silhouette_(clustering) for a/b notation
-# def silhouette_coef(centroids, clusters):
-#     mean_si_over_clusters = torch.zeros(len(centroids))
-#     for cluster_idx in range(len(centroids)):
-#         # information about the current cluster
-#         curr_cluster = clusters[cluster_idx]
+def silhouette_coef(centroids, clusters):
+    mean_si_over_clusters = torch.zeros(len(centroids)).to(device="cuda")
+    for cluster_idx in range(len(centroids)):
+        # information about the current cluster
+        curr_cluster = clusters[cluster_idx]
 
-#         # initialize tensors to hold a and b values
-#         a_values = torch.zeros(len(curr_cluster))
-#         b_values = torch.zeros(len(curr_cluster))
+        # initialize tensors to hold a and b values
+        a_values = torch.zeros(len(curr_cluster)).to(device="cuda")
+        b_values = torch.zeros(len(curr_cluster)).to(device="cuda")
 
-#         if (len(curr_cluster) > 1):
+        if (len(curr_cluster) > 1):
 
-#             for point_idx in range(dist.get_rank(), len(curr_cluster), dist.get_world_size()):
-#                 curr_point = torch.unsqueeze(curr_cluster[point_idx], 0)
+            for point_idx in range(dist.get_rank(), len(curr_cluster), dist.get_world_size()):
+                curr_point = torch.unsqueeze(curr_cluster[point_idx], 0)
 
-#                 # calculate the "a" value
-#                 cluster_points_excluding_point = torch.cat((curr_cluster[:point_idx], curr_cluster[point_idx + 1:]))
-#                 a = torch.mean(torch.cdist(curr_point, cluster_points_excluding_point))
-#                 a_values[point_idx] = a
+                # calculate the "a" value
+                cluster_points_excluding_point = torch.cat((curr_cluster[:point_idx], curr_cluster[point_idx + 1:]))
+                a = torch.mean(torch.cdist(curr_point, cluster_points_excluding_point))
+                a_values[point_idx] = a
 
 
-#                 # calculate the "b" value
-#                 b = torch.inf
-#                 other_clusters = clusters[:cluster_idx]
-#                 other_clusters.extend(clusters[cluster_idx + 1:])
-#                 for other_cluster in other_clusters:
-#                     avg_distance = torch.mean(torch.cdist(curr_point, other_cluster))
-#                     if avg_distance < b:
-#                         b = avg_distance
-#                 b_values[point_idx] = b
+                # calculate the "b" value
+                b = torch.inf
+                other_clusters = clusters[:cluster_idx]
+                other_clusters.extend(clusters[cluster_idx + 1:])
+                for other_cluster in other_clusters:
+                    avg_distance = torch.mean(torch.cdist(curr_point, other_cluster))
+                    if avg_distance < b:
+                        b = avg_distance
+                b_values[point_idx] = b
                     
 
-#             # get a and b values
-#             dist.reduce(a_values, 0, torch.distributed.ReduceOp.MAX)
-#             dist.reduce(b_values, 0, torch.distributed.ReduceOp.MAX)
+            # get a and b values
+            dist.reduce(a_values, 0, torch.distributed.ReduceOp.MAX)
+            dist.reduce(b_values, 0, torch.distributed.ReduceOp.MAX)
 
-#             # calculate s_i values
-#             max_a_or_b = torch.max(torch.cat((a_values,b_values)))
-#             s_i_values = (b_values - a_values)/max_a_or_b
+            # calculate s_i values
+            max_a_or_b = torch.max(torch.cat((a_values,b_values)))
+            s_i_values = (b_values - a_values)/max_a_or_b
 
-#             # calculate mean s_i value for this cluster
-#             mean_s_i = torch.mean(s_i_values)
+            # calculate mean s_i value for this cluster
+            mean_s_i = torch.mean(s_i_values)
 
-#             mean_si_over_clusters[cluster_idx] = mean_s_i
+            mean_si_over_clusters[cluster_idx] = mean_s_i
         
 
-#     silhouette_coef = max(mean_si_over_clusters)
-#     return silhouette_coef
+    silhouette_coef = mean_si_over_clusters # = max(mean_si_over_clusters)
+    return silhouette_coef
 
+"""
+Calculates the silhouette coeffiecient of the clustering
 
-def simplified_silhouette(centroids, clusters):
+centroids: a 2d tensor of the centroids
+clusters: a list of 2d tensors representing the contents of each cluster
+if coefficient == True, the silhouette coefficient is returned. Otherwise, a list of each cluster's average silhouette is returned
+"""
+def simplified_silhouette(centroids, clusters, coeffiecient = True):
 
     silhouette_coef = torch.zeros(1).to(device="cuda")
     print("calculating silhouettes")
+    silhouettes = []
     for cluster_idx in tqdm(range(dist.get_rank(), len(centroids), dist.get_world_size())):
         centroid = torch.unsqueeze(centroids[cluster_idx], 0).double().to(device="cuda")
         curr_cluster = clusters[cluster_idx].to(device="cuda").double()
@@ -121,15 +133,14 @@ def simplified_silhouette(centroids, clusters):
         else:
             pairwise_distances = torch.cdist(curr_cluster, other_centroids)
             b = torch.min(pairwise_distances, dim=1, keepdim=True).values
-
         # clean up a lil bit
         del curr_cluster
         del other_centroids
 
-
         # calculate average s value for this cluster
         s_values = (b - a)/float(max(torch.cat((a, b))))
         curr_sill_val = sum(s_values)/len(s_values)
+        silhouettes.append(float(curr_sill_val))
         if curr_sill_val > silhouette_coef:
             silhouette_coef = curr_sill_val
         
@@ -141,7 +152,10 @@ def simplified_silhouette(centroids, clusters):
     # gather up the max silhouette coef
     dist.reduce(silhouette_coef, 0, dist.ReduceOp.MAX)
 
-    return silhouette_coef
+    if coeffiecient:
+        return silhouette_coef
+    else:
+        return silhouettes
 
 # https://en.wikipedia.org/wiki/Davies%E2%80%93Bouldin_index
 def db_index(inertias, centroids):

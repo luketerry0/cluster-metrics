@@ -35,7 +35,7 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS):
         # read the embeddings if it's the first level, or read in the previous level's clusters if it's not
         if LEVEL == 1:
             for c in range(cfg.n_clusters[LEVEL - 1]):
-                this_cluster = torch.tensor((embeddings[clusters[c]]))
+                this_cluster = torch.tensor(embeddings[clusters[c]])
                 curr_level_clusters.append(this_cluster)
             
         else:
@@ -61,7 +61,7 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS):
         
         print(f'Inertias calculated for level {LEVEL}')
 
-        calculate the simplified silhouette coefficients of this clustering
+        # calculate the simplified silhouette coefficients of this clustering
         silhouette_tensor = simplified_silhouette(centroids, curr_level_clusters)
         with open(storage_path +'silhouette_coefficients.pickle', 'wb') as file:
             pickle.dump(silhouette_tensor, file, protocol=pickle.HIGHEST_PROTOCOL)
@@ -89,10 +89,6 @@ if __name__=="__main__":
     parser.add_argument("--path_to_stored_metrics", type=str, help="Path to config file", default="/home/luke/Documents/metrics/outputs")
     parser.add_argument("--base_path", type=str, help="Path to config file", default="/home/luke/Documents/metrics")
     parser.add_argument("--embeddings_path", type=str, help="Path to config file", default="./skyline_embeddings_64.npy")
-
-
-    
-
 
     args, opts = parser.parse_known_args()
 
