@@ -10,7 +10,7 @@ from torch.nn import PairwiseDistance
 import numpy as np
 import torch
 import torch.distributed as dist
-from metrics import inertia, simplified_silhouette, db_index, silhouette_coef
+from metrics import inertia, simplified_silhouette, db_index, silhouette_coef, validation_simple_silhouettes
 import os
 import math
 
@@ -44,34 +44,20 @@ for i in range(NUM_CLUSTERS):
 
 # compare inertia
 my_inertia = inertia(centroid_dist_format, label_dist_format)
-print(f"Inertias Match: {(float(sum(my_inertia)) - sklearn_inertia) < CALCULATION_THRESHOLD}")
+# print(f"Inertias Match: {(float(sum(my_inertia)) - sklearn_inertia) < CALCULATION_THRESHOLD}")
 
 # compare silhouette score
 sklearn_silhouette = silhouette_score(data, labels, metric='euclidean')
 my_silhouette = silhouette_coef(centroid_dist_format, label_dist_format)
-print(sklearn_silhouette)
-print(float(sum(my_silhouette)/len(my_silhouette)))
+# print(sklearn_silhouette)
+# print(float(sum(my_silhouette)/len(my_silhouette)))
 
 # compare simplified silhouette
-my_simplified_silhouette = simplified_silhouette(centroid_dist_format, label_dist_format, coeffiecient=False)
-# scikit-learn doesn't have this, so I have some super simple code here
-distances_to_centroids = torch.sort(torch.cdist(data.double(), centroid_dist_format)).values
-# distances to centroids is now a sorted list of each datapoints distance to the centroids (sorted by dist)
-# smallest distance is the centroid of the datapoint's cluster, and the second smallest is the minimum distance to a different centroid
-# a' and b' from https://en.wikipedia.org/wiki/Silhouette_(clustering)
-trimmed_distance = distances_to_centroids[:, :2]
-denominator = torch.max(trimmed_distance, dim=1).values
-numerator = torch.sub(trimmed_distance[:, 1], trimmed_distance[:, 0])
-simplified_silhouettes = torch.tensor(numerator/denominator)
-# now just take the average for each cluster
-silhouettes_by_cluster = [[] for i in range(NUM_CLUSTERS)]
-for i in range(NUM_DATAPOINTS):
-    silhouettes_by_cluster[labels[i]].append(float(simplified_silhouettes[i]))
-silhouettes_by_cluster = [sum(c)/len(c) for c in silhouettes_by_cluster]
-print(silhouettes_by_cluster)
-print(my_simplified_silhouette)
+my_simple_silhouettes = simplified_silhouette(centroid_dist_format, label_dist_format)
+validation_simple_silhouettes = validation_simple_silhouettes(centroid_dist_format, label_dist_format)
 
-
+print(my_simple_silhouettes)
+print(validation_simple_silhouettes)
 
 dist.destroy_process_group()
 

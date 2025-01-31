@@ -5,7 +5,7 @@ from argparse import ArgumentParser
 import numpy as np
 import os
 import math
-from metrics import inertia, simplified_silhouette, db_index
+from metrics import inertia, simplified_silhouette, db_index, validation_simple_silhouettes
 import pickle
 
 def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS):
@@ -62,7 +62,7 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS):
         print(f'Inertias calculated for level {LEVEL}')
 
         # calculate the simplified silhouette coefficients of this clustering
-        silhouette_tensor = simplified_silhouette(centroids, curr_level_clusters)
+        silhouette_tensor = simple_silhouette_easier(centroids, curr_level_clusters)
         with open(storage_path +'silhouette_coefficients.pickle', 'wb') as file:
             pickle.dump(silhouette_tensor, file, protocol=pickle.HIGHEST_PROTOCOL)
 

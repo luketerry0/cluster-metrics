@@ -101,9 +101,8 @@ if coefficient == True, the silhouette coefficient is returned. Otherwise, a lis
 """
 def simplified_silhouette(centroids, clusters, coeffiecient = True):
 
-    silhouette_coef = torch.zeros(1).to(device="cuda")
     print("calculating silhouettes")
-    silhouettes = []
+    avg_silhouettes = torch.zeros(len(centroids))
     for cluster_idx in tqdm(range(dist.get_rank(), len(centroids), dist.get_world_size())):
         centroid = torch.unsqueeze(centroids[cluster_idx], 0).double().to(device="cuda")
         curr_cluster = clusters[cluster_idx].to(device="cuda").double()
@@ -138,24 +137,43 @@ def simplified_silhouette(centroids, clusters, coeffiecient = True):
         del other_centroids
 
         # calculate average s value for this cluster
-        s_values = (b - a)/float(max(torch.cat((a, b))))
-        curr_sill_val = sum(s_values)/len(s_values)
-        silhouettes.append(float(curr_sill_val))
-        if curr_sill_val > silhouette_coef:
-            silhouette_coef = curr_sill_val
-        
+        s_values = torch.div((b - a).t(), torch.max(torch.cat((a, b), dim=1), dim=1).values)
+        avg_silhouettes[cluster_idx] = torch.mean(s_values)
+
         # clean up again
         del a
         del b
-        del curr_sill_val
 
-    # gather up the max silhouette coef
-    dist.reduce(silhouette_coef, 0, dist.ReduceOp.MAX)
+    return avg_silhouettes
 
-    if coeffiecient:
-        return silhouette_coef
-    else:
-        return silhouettes
+"""
+Calculates the same simplified silhouette as above, but is easier to understand.
+Will crash because of cuda memory if ran on large data (this code is for validation only)
+
+centroids and clusters are same parameters as above
+"""
+def validation_simple_silhouettes(centroids, clusters):
+    centroids = centroids
+    points = torch.cat(clusters).double()
+    cluster_sizes = [a.size(0) for a in clusters]
+
+    # calculate the pairwise distances between each point and every centroid, discarding all except the closest and second closest
+    # we're relying here on the fact that in k-means, the closest centroid always corresponds to the point's class
+    distances = torch.sort(torch.cdist(points, centroids), dim=1).values[:, :2]
+    del points
+    silhouettes = (distances[:,1] - distances[:,0]) / torch.max(distances, dim=1).values
+    print(silhouettes)
+    # take the average of each cluster's silhouette 
+    cluster_sizes = [a.size(0) for a in clusters]
+    avg_silhouettes = torch.zeros(len(cluster_sizes))
+    for cluster_idx in tqdm(range(len(cluster_sizes))):
+        mask = torch.cat(
+            [torch.zeros(sum(cluster_sizes[:cluster_idx])), 
+            torch.ones(cluster_sizes[cluster_idx]), 
+            torch.zeros(sum(cluster_sizes[cluster_idx + 1:]))])
+        avg_silhouettes[cluster_idx] = torch.sum(silhouettes*mask)/cluster_sizes[cluster_idx]
+
+    return avg_silhouettes
 
 # https://en.wikipedia.org/wiki/Davies%E2%80%93Bouldin_index
 def db_index(inertias, centroids):
