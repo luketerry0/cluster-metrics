@@ -162,11 +162,10 @@ def validation_simple_silhouettes(centroids, clusters):
     distances = torch.sort(torch.cdist(points, centroids), dim=1).values[:, :2]
     del points
     silhouettes = (distances[:,1] - distances[:,0]) / torch.max(distances, dim=1).values
-    print(silhouettes)
     # take the average of each cluster's silhouette 
     cluster_sizes = [a.size(0) for a in clusters]
     avg_silhouettes = torch.zeros(len(cluster_sizes))
-    for cluster_idx in tqdm(range(len(cluster_sizes))):
+    for cluster_idx in range(len(cluster_sizes)):
         mask = torch.cat(
             [torch.zeros(sum(cluster_sizes[:cluster_idx])), 
             torch.ones(cluster_sizes[cluster_idx]), 
@@ -176,32 +175,34 @@ def validation_simple_silhouettes(centroids, clusters):
     return avg_silhouettes
 
 # https://en.wikipedia.org/wiki/Davies%E2%80%93Bouldin_index
-def db_index(inertias, centroids):
-    #DB index is the average maxiumum (s_i + s_j)/mij for a cluster a and all other clusters b, where s_i or s_j is the square root of the silhouette, and d_ij is the distance between centroids
-    # this will use euclidean distance and standard deviation as measures...
+def db_index(centroids, clusters):
+    print("Calculating Davies-Bouldin Index")
 
-    # take the square roots of inertias
-    s = torch.sqrt(inertias)
+    # calculate pairwise distances between cluster centroids
+    m_ij = torch.cdist(centroids, centroids)
 
-    # get the pairwise distances among centroids
-    m = torch.cdist(centroids, centroids).to(device="cuda")
+    avg_distances = torch.zeros(len(centroids))
+    for cluster_idx in range(len(centroids)):
+        # calculate average distance between a point and it's respective centroid
+        avg_distances[cluster_idx] = torch.mean(torch.cdist(clusters[cluster_idx], centroids[cluster_idx, None].to(torch.float)))
+    
+    # compute pairwise sums
+    pairwise_sum_avg_dist = torch.cdist(avg_distances[:, None], -1*avg_distances[:, None], p = 1)
+    del avg_distances
 
-    # get pairwise sums of the average distance to the centroids
-    s_ij = s[:, None] + s
-    r_ij = torch.div(s_ij, m)
+    # compute R_i,j values
+    r_ij = (pairwise_sum_avg_dist/m_ij).fill_diagonal_(0)
+    del m_ij
+    del pairwise_sum_avg_dist
 
-    # calculate DB index
-    r_ij.fill_diagonal_(0)
+    # compute D_i values by taking columnwise maximum
     d_i = torch.max(r_ij, dim=0).values
-    db = torch.mean(d_i)
-
-    del m 
-    del d_i
-    del s_ij
     del r_ij
-    torch.cuda.empty_cache()
 
-    return db
+    # compute Davies Bouldin index by taking the average of d_i values
+    db_idx = torch.mean(d_i)
+
+    return db_idx
 
     
     

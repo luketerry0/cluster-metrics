@@ -5,7 +5,7 @@ run with run_sanity_check_local.sh
 """
 
 from sklearn.cluster import k_means
-from sklearn.metrics import silhouette_score
+from sklearn.metrics import silhouette_score, davies_bouldin_score
 from torch.nn import PairwiseDistance
 import numpy as np
 import torch
@@ -14,13 +14,13 @@ from metrics import inertia, simplified_silhouette, db_index, silhouette_coef, v
 import os
 import math
 
-NUM_CLUSTERS = 5
-NUM_DATAPOINTS = 10
-DATA_DIMENSION = 10
+NUM_CLUSTERS = 1800
+NUM_DATAPOINTS = 10000
+DATA_DIMENSION = 787
 CALCULATION_THRESHOLD = 0.000001
 
 # for testing reproducibility
-torch.manual_seed(0)
+# torch.manual_seed(0)
 
 # pytorch process group initialization
 world_size = int(os.environ["WORLD_SIZE"])
@@ -44,20 +44,22 @@ for i in range(NUM_CLUSTERS):
 
 # compare inertia
 my_inertia = inertia(centroid_dist_format, label_dist_format)
-# print(f"Inertias Match: {(float(sum(my_inertia)) - sklearn_inertia) < CALCULATION_THRESHOLD}")
+print(f"Inertias Match: {(float(sum(my_inertia)) - sklearn_inertia) < CALCULATION_THRESHOLD}")
 
 # compare silhouette score
 sklearn_silhouette = silhouette_score(data, labels, metric='euclidean')
 my_silhouette = silhouette_coef(centroid_dist_format, label_dist_format)
-# print(sklearn_silhouette)
-# print(float(sum(my_silhouette)/len(my_silhouette)))
 
 # compare simplified silhouette
 my_simple_silhouettes = simplified_silhouette(centroid_dist_format, label_dist_format)
 validation_simple_silhouettes = validation_simple_silhouettes(centroid_dist_format, label_dist_format)
+print(f"Simplified Silhouettes Match: {((my_simple_silhouettes - validation_simple_silhouettes) < CALCULATION_THRESHOLD).all()}")
 
-print(my_simple_silhouettes)
-print(validation_simple_silhouettes)
+# compare Davies Bouldin index
+my_db_index = db_index(centroid_dist_format, label_dist_format)
+sklearn_db_index = davies_bouldin_score(data, labels)
+print(f"Davies-Bouldin Index Match: {(float(my_db_index) - sklearn_db_index) < CALCULATION_THRESHOLD}")
+
 
 dist.destroy_process_group()
 
