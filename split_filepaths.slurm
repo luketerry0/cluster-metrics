@@ -1,29 +1,28 @@
 #!/bin/bash
 # the name of the partition you are submitting to
-#SBATCH --partition=ai2es
+#SBATCH --partition=ai2es,gpu
 # the number of nodes you will use, usually only 1 is required.  If your code is not designed to use more then more will not be better.
-#SBATCH --nodes=2
+#SBATCH --nodes=1
 # the number of processes you will launch.  This should be equal to the number of nodes
-#SBATCH --ntasks=2
+#SBATCH --ntasks=1
 # Thread count, or the number of hypercores you plan to use.  This is not enforced.
 #SBATCH --cpus-per-task=32
 # The number of gpus you require each node to have
-#SBATCH --gres=gpu:4
+#SBATCH --gres=gpu:0
 # memory (RAM) you will use on each machine.  Provide an upper bound, this is not enforced
 #SBATCH --mem=64G
 # Where you would like your stdout and stderr to appear
-#SBATCH --output=/home/luketerry/cluster-metrics/logs/out-%j.txt
-#SBATCH --error=/home/luketerry/cluster-metrics/logs/err-%j.txt
+#SBATCH --output=/home/luketerry/cluster-metrics/logs/out-fp-%j.txt
+#SBATCH --error=/home/luketerry/cluster-metrics/logs/err-fp-%j.txt
 # The maximum time your job can take (most partitions limit this)
-#SBATCH --time=12:00:00
+#SBATCH --time=24:00:00
 # job name which will appear in queue
-#SBATCH --job-name=metrics
+#SBATCH --job-name=metrics_filepath_split
 # if you fill this out slurm will email you job status updates, consider sending them to a folder.
 #SBATCH --mail-user=luke.h.terry-1@ou.edu
 #SBATCH --mail-type=ALL
 # the working directory for your job.  This must exist.
 #SBATCH --chdir=/home/luketerry/cluster-metrics/
-#SBATCH --exclude=c829,c830
 #################################################
 
 # this is how we get the ip address of the node that will be used for the master process
@@ -39,25 +38,4 @@ echo Node IP: $head_node_ip
 # activating a version of my environment
 conda activate /home/luketerry/miniforge3/envs/ssl-data-curation
 
-trial="$1" # something like "4_level_skyline_exp"
-
-# logging in to weights and biases
-source /home/luketerry/.wandb_api_key.sh
-wandb login $WANDB_API_KEY
-
-# launching a run that will be executed over multiple compute nodes
-srun torchrun \
---nnodes $SLURM_JOB_NUM_NODES \
---nproc_per_node 2 \
---rdzv_id $RANDOM \
---rdzv_backend c10d \
---rdzv_endpoint "$head_node_ip:64425" \
-main.py \
---wandb_name="$1" \
---config_file="/ourdisk/hpc/ai2es/luketerry/${trial}/config.yaml" \
---world_size=$SLURM_JOB_NUM_NODES \
---cluster_set="${trial}" \
---path_to_stored_metrics="/ourdisk/hpc/ai2es/luketerry/metrics" \
---base_path="/ourdisk/hpc/ai2es/luketerry" \
---embeddings_path="/ourdisk/hpc/ai2es/luketerry/npy_laion_embeddings/laion_embeddings_shard_0.npy" \
---filename_key_path="/ourdisk/hpc/ai2es/luketerry/npy_laion_embeddings/filenames_shard_0.pkl"
+python ./split_filepaths.py

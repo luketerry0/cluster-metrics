@@ -3,6 +3,9 @@ import os
 import math
 import torch
 from tqdm import tqdm
+import wandb
+from PIL import Image
+
 
 def print_mem_usage():
     print("torch.cuda.memory_allocated: %fGB"%(torch.cuda.memory_allocated(0)/1024/1024/1024))
@@ -28,19 +31,24 @@ def inertia(centroids, clusters):
 
         inertias[idx] = inertia
 
-        # gather up the tensors
-        if rank == 0:
-            dist.gather(inertias[idx], [inertias[a] for a in range(idx, idx+dist.get_world_size())])
-        else:
-            dist.gather(inertias[idx])
-
-
         # clean up
         del centroid
         del cluster
         del inertia
-    
-    return inertias
+
+    # gather up the tensors, and resize appropriately to calculate inertias
+    if rank == 0:
+        all_inertias = [torch.zeros(len(centroids)).to(device="cuda") for a in range(dist.get_world_size())]
+        dist.gather(inertias, all_inertias)
+        del inertias
+        stacked_inertias = torch.stack(all_inertias)
+        final_inertias = torch.sum(stacked_inertias, dim=0)
+        return final_inertias
+    else:
+        dist.gather(inertias)
+        del inertias
+
+
 
 # # see https://en.wikipedia.org/wiki/Silhouette_(clustering) for a/b notation
 def silhouette_coef(centroids, clusters):
@@ -97,9 +105,8 @@ Calculates the silhouette coeffiecient of the clustering
 
 centroids: a 2d tensor of the centroids
 clusters: a list of 2d tensors representing the contents of each cluster
-if coefficient == True, the silhouette coefficient is returned. Otherwise, a list of each cluster's average silhouette is returned
 """
-def simplified_silhouette(centroids, clusters, coeffiecient = True):
+def simplified_silhouette(centroids, clusters):
 
     print("calculating silhouettes")
     avg_silhouettes = torch.zeros(len(centroids))
@@ -179,30 +186,54 @@ def db_index(centroids, clusters):
     print("Calculating Davies-Bouldin Index")
 
     # calculate pairwise distances between cluster centroids
-    m_ij = torch.cdist(centroids, centroids)
+    m_ij = torch.cdist(centroids, centroids).to(device="cuda")
 
     avg_distances = torch.zeros(len(centroids))
-    for cluster_idx in range(len(centroids)):
+    for cluster_idx in range(dist.get_rank(), len(centroids), dist.get_world_size()):
         # calculate average distance between a point and it's respective centroid
-        avg_distances[cluster_idx] = torch.mean(torch.cdist(clusters[cluster_idx], centroids[cluster_idx, None].to(torch.float)))
-    
+        avg_distances[cluster_idx] = torch.mean(torch.cdist(clusters[cluster_idx], centroids[cluster_idx, None].to(torch.float))).to(device="cuda")
+    del clusters
+
     # compute pairwise sums
-    pairwise_sum_avg_dist = torch.cdist(avg_distances[:, None], -1*avg_distances[:, None], p = 1)
+    pairwise_sum_avg_dist = torch.cdist(avg_distances[:, None], -1*avg_distances[:, None], p = 1).to(device="cuda")
     del avg_distances
 
     # compute R_i,j values
-    r_ij = (pairwise_sum_avg_dist/m_ij).fill_diagonal_(0)
+    r_ij = (pairwise_sum_avg_dist/m_ij).fill_diagonal_(0).to(device="cuda")
     del m_ij
     del pairwise_sum_avg_dist
 
     # compute D_i values by taking columnwise maximum
-    d_i = torch.max(r_ij, dim=0).values
+    d_i = torch.max(r_ij, dim=0).values.to(device="cuda")
     del r_ij
 
-    # compute Davies Bouldin index by taking the average of d_i values
-    db_idx = torch.mean(d_i)
+    # gather up the D_i values
+    dist.reduce(d_i, 0, torch.distributed.ReduceOp.SUM)
 
-    return db_idx
+    # compute Davies Bouldin index by taking the average of d_i values
+    if dist.get_rank() == 0:
+        db_idx = d_i[0]/len(centroids)
+        print(db_idx)
+        return db_idx
 
     
+"""
+Samples image from the cluster denoted by idx and logs them to wandb
+
+filepaths: a list of tuples [(filepath, caption), ...] for the images
+cluster_indices: list of tensors denoting the indices in the filepaths object where the images in a cluster are
+   e. g. [(0, 1, 2, 3), (4, 5)] means the first four images in filepaths are in the first cluster, and the next two are in the second
+idx: the index of the cluster to log
+wandb_caption: the caption to log the image to wandb with
+num_images: the number of images to log
+log_step: the wandb step to log images with
+"""
+def log_cluster(filepaths, cluster_indices, idx, wandb_caption, num_images, log_step):
+    # sample from the cluster and log to wandb
+    curr_cluster_indices = cluster_indices[idx]
+    sample = [Image.open(filepaths[curr_cluster_indices[x]][0]) for x in range(num_images)]
+
+    # log the image(s) to wandb
+    wandb.log({wandb_caption: [wandb.Image(img) for img in sample]}, step=log_step)
+
     
