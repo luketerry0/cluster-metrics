@@ -14,8 +14,8 @@ from metrics import inertia, simplified_silhouette, db_index, silhouette_coef, v
 import os
 import math
 
-NUM_CLUSTERS = 1800
-NUM_DATAPOINTS = 10000
+NUM_CLUSTERS = 18
+NUM_DATAPOINTS = 100
 DATA_DIMENSION = 787
 CALCULATION_THRESHOLD = 0.000001
 
