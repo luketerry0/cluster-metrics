@@ -5,7 +5,7 @@ from argparse import ArgumentParser
 import numpy as np
 import os
 import math
-import wandb
+# import wandb
 from metrics import inertia, simplified_silhouette, db_index, validation_simple_silhouettes, log_cluster
 import pickle
 
@@ -18,15 +18,15 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH):
     torch.cuda.set_device(rank % torch.cuda.device_count())
     dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
 
-    if rank == 0:
-        # initialize wandb logging
-        run = wandb.init(
-            project="ssl-clustering-metrics",
-            entity='ai2es',
-            name=args.wandb_name,
-            dir=f'/ourdisk/hpc/ai2es/luketerry/wandbruns/{args.wandb_name}/metrics/wandb',
-            config=OmegaConf.to_container(cfg)
-        )   
+    # if rank == 0:
+    #     # initialize wandb logging
+    #     run = wandb.init(
+    #         project="ssl-clustering-metrics",
+    #         entity='ai2es',
+    #         name=args.wandb_name,
+    #         dir=f'/ourdisk/hpc/ai2es/luketerry/wandbruns/{args.wandb_name}/metrics/wandb',
+    #         config=OmegaConf.to_container(cfg)
+    #     )   
 
 
     # load the embeddings
@@ -42,6 +42,7 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH):
 
         # get the centroids for the current level
         centroids = torch.from_numpy(np.load(f'{BASE_PATH}/{CLUSTER_SET}/level{LEVEL}/centroids.npy', allow_pickle=True))
+        print(centroids.shape)
 
         # if the level isn't the first one, get the cluster indices from the previous level and flatten them
         curr_level_clusters = []
@@ -75,49 +76,49 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH):
         
         print(f'Inertias calculated for level {LEVEL}')
 
-        # calculate the simplified silhouette coefficients of this clustering
-        silhouette_tensor = simplified_silhouette(centroids, curr_level_clusters)
-        with open(storage_path +'silhouette_coefficients.pickle', 'wb') as file:
-            pickle.dump(silhouette_tensor, file, protocol=pickle.HIGHEST_PROTOCOL)
+        # # calculate the simplified silhouette coefficients of this clustering
+        # silhouette_tensor = simplified_silhouette(centroids, curr_level_clusters)
+        # with open(storage_path +'silhouette_coefficients.pickle', 'wb') as file:
+        #     pickle.dump(silhouette_tensor, file, protocol=pickle.HIGHEST_PROTOCOL)
 
-        print(f'Silhouettes calculated for level {LEVEL}')
+        # print(f'Silhouettes calculated for level {LEVEL}')
 
-        db_tensor = db_index(centroids, curr_level_clusters)
-        with open(storage_path +'db_index.pickle', 'wb') as file:
-            pickle.dump(db_tensor, file, protocol=pickle.HIGHEST_PROTOCOL)
+        # db_tensor = db_index(centroids, curr_level_clusters)
+        # with open(storage_path +'db_index.pickle', 'wb') as file:
+        #     pickle.dump(db_tensor, file, protocol=pickle.HIGHEST_PROTOCOL)
 
-        print(f'Davies-Bouldin Index calculated for level {LEVEL}')
+        # print(f'Davies-Bouldin Index calculated for level {LEVEL}')
 
-        # sample images from cluster with the highest and lowest inertias to wandb
-        if rank == 0:
-            # read in filepaths to pictures
-            with open(KEY_PATH, "rb") as fp:
-                filepaths = pickle.load(fp)
+        # # sample images from cluster with the highest and lowest inertias to wandb
+        # if rank == 0:
+        #     # read in filepaths to pictures
+        #     with open(KEY_PATH, "rb") as fp:
+        #         filepaths = pickle.load(fp)
 
-            # log the best and worst 5 clusters based on inertia
-            cluster_order_indices = torch.argsort(inertia_tensor).tolist()
-            half_clusters = math.floor(len(cluster_order_indices)/2)
+        #     # log the best and worst 5 clusters based on inertia
+        #     cluster_order_indices = torch.argsort(inertia_tensor).tolist()
+        #     half_clusters = math.floor(len(cluster_order_indices)/2)
 
-            for i in range(max(-5, half_clusters*-1), min(5, half_clusters), 1):
-                log_cluster(
-                    filepaths, 
-                    cluster_indices, 
-                    cluster_order_indices[i],
-                    f"Cluster order {i}: inertia={inertia_tensor[cluster_order_indices[i]]}",
-                    20,
-                    LEVEL - 1
-                    )
+        #     for i in range(max(-5, half_clusters*-1), min(5, half_clusters), 1):
+        #         log_cluster(
+        #             filepaths, 
+        #             cluster_indices, 
+        #             cluster_order_indices[i],
+        #             f"Cluster order {i}: inertia={inertia_tensor[cluster_order_indices[i]]}",
+        #             20,
+        #             LEVEL - 1
+        #             )
 
-            # log other things...
-            inertia_list = inertia_tensor.tolist()
-            wandb.log({"average inertia": sum(inertia_list)/len(inertia_list)}, step=LEVEL-1)
-            wandb.log({"davies bouldin index ": db_tensor.tolist()}, step = LEVEL-1)
-            wandb.log({"simplified silhouette coeffecient": max(silhouette_tensor.tolist())}, step = LEVEL-1)
+        #     # log other things...
+        #     inertia_list = inertia_tensor.tolist()
+        #     wandb.log({"average inertia": sum(inertia_list)/len(inertia_list)}, step=LEVEL-1)
+        #     wandb.log({"davies bouldin index ": db_tensor.tolist()}, step = LEVEL-1)
+        #     wandb.log({"simplified silhouette coeffecient": max(silhouette_tensor.tolist())}, step = LEVEL-1)
 
         # clean up
         del inertia_tensor
-        del db_tensor
-        del silhouette_tensor
+        # del db_tensor
+        # del silhouette_tensor
         
 
 
