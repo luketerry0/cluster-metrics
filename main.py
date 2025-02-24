@@ -6,7 +6,7 @@ import numpy as np
 import os
 import math
 # import wandb
-from metrics import inertia, simplified_silhouette, db_index, validation_simple_silhouettes, log_cluster
+from metrics import inertia, simplified_silhouette, db_index, validation_simple_silhouettes, log_cluster, MetricsCalculator
 import pickle
 
 def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH):
@@ -32,6 +32,7 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH):
     # load the embeddings
     embeddings_path=cfg.embeddings_path 
     embeddings=np.load(embeddings_path, mmap_mode="r")
+    embeddings_dim = embeddings[0].shape[0]
 
     # initialize wandb step
     current_step = 0
@@ -42,7 +43,6 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH):
 
         # get the centroids for the current level
         centroids = torch.from_numpy(np.load(f'{BASE_PATH}/{CLUSTER_SET}/level{LEVEL}/centroids.npy', allow_pickle=True))
-        print(centroids.shape)
 
         # if the level isn't the first one, get the cluster indices from the previous level and flatten them
         curr_level_clusters = []
@@ -68,13 +68,17 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH):
         # calculate the inertia of this level's clusters
         storage_path = f'{PATH_TO_STORED_METRICS}/{CLUSTER_SET}/level{LEVEL}/'
 
-        inertia_tensor = inertia(centroids, curr_level_clusters)
-        if not os.path.exists(storage_path):
-            os.makedirs(storage_path)
-        with open(storage_path + 'inertia.pickle', 'wb') as file:
-            pickle.dump(inertia_tensor, file, protocol=pickle.HIGHEST_PROTOCOL)
+        metrics_calulator = MetricsCalculator(centroids, curr_level_clusters, embeddings_dim, clusters)
+
+        metrics_calulator.inertia()
+
+        # inertia_tensor = inertia(centroids, curr_level_clusters)
+        # if not os.path.exists(storage_path):
+        #     os.makedirs(storage_path)
+        # with open(storage_path + 'inertia.pickle', 'wb') as file:
+        #     pickle.dump(inertia_tensor, file, protocol=pickle.HIGHEST_PROTOCOL)
         
-        print(f'Inertias calculated for level {LEVEL}')
+        # print(f'Inertias calculated for level {LEVEL}')
 
         # # calculate the simplified silhouette coefficients of this clustering
         # silhouette_tensor = simplified_silhouette(centroids, curr_level_clusters)
@@ -116,7 +120,7 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH):
         #     wandb.log({"simplified silhouette coeffecient": max(silhouette_tensor.tolist())}, step = LEVEL-1)
 
         # clean up
-        del inertia_tensor
+        # del inertia_tensor
         # del db_tensor
         # del silhouette_tensor
         

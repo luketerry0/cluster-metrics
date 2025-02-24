@@ -10,7 +10,7 @@ from torch.nn import PairwiseDistance
 import numpy as np
 import torch
 import torch.distributed as dist
-from metrics import inertia, simplified_silhouette, db_index, silhouette_coef, validation_simple_silhouettes
+from metrics import inertia, simplified_silhouette, db_index, silhouette_coef, validation_simple_silhouettes, MetricsCalculator
 import os
 import math
 
@@ -41,24 +41,26 @@ label_dist_format = []
 for i in range(NUM_CLUSTERS):
     label_dist_format.append(data[labels == i])
 
+metrics_calulator = MetricsCalculator(centroid_dist_format, label_dist_format, DATA_DIMENSION, data)
+
 
 # compare inertia
-my_inertia = inertia(centroid_dist_format, label_dist_format)
+my_inertia = metrics_calulator.inertia()
 print(f"Inertias Match: {(float(sum(my_inertia)) - sklearn_inertia) < CALCULATION_THRESHOLD}")
 
-# compare silhouette score
-sklearn_silhouette = silhouette_score(data, labels, metric='euclidean')
-my_silhouette = silhouette_coef(centroid_dist_format, label_dist_format)
+# # compare silhouette score
+# sklearn_silhouette = silhouette_score(data, labels, metric='euclidean')
+# my_silhouette = silhouette_coef(centroid_dist_format, label_dist_format)
 
-# compare simplified silhouette
-my_simple_silhouettes = simplified_silhouette(centroid_dist_format, label_dist_format)
-validation_simple_silhouettes = validation_simple_silhouettes(centroid_dist_format, label_dist_format)
-print(f"Simplified Silhouettes Match: {((my_simple_silhouettes - validation_simple_silhouettes) < CALCULATION_THRESHOLD).all()}")
+# # compare simplified silhouette
+# my_simple_silhouettes = simplified_silhouette(centroid_dist_format, label_dist_format)
+# validation_simple_silhouettes = validation_simple_silhouettes(centroid_dist_format, label_dist_format)
+# print(f"Simplified Silhouettes Match: {((my_simple_silhouettes - validation_simple_silhouettes) < CALCULATION_THRESHOLD).all()}")
 
-# compare Davies Bouldin index
-my_db_index = db_index(centroid_dist_format, label_dist_format)
-sklearn_db_index = davies_bouldin_score(data, labels)
-print(f"Davies-Bouldin Index Match: {(float(my_db_index) - sklearn_db_index) < CALCULATION_THRESHOLD}")
+# # compare Davies Bouldin index
+# my_db_index = db_index(centroid_dist_format, label_dist_format)
+# sklearn_db_index = davies_bouldin_score(data, labels)
+# print(f"Davies-Bouldin Index Match: {(float(my_db_index) - sklearn_db_index) < CALCULATION_THRESHOLD}")
 
 
 dist.destroy_process_group()

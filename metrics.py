@@ -2,15 +2,90 @@ import torch.distributed as dist
 import os
 import math
 import torch
+import numpy as np
+import tempfile
 from tqdm import tqdm
+import itertools
 # import wandb
 from PIL import Image
+from tensordict import MemoryMappedTensor
+import gc
+
+"""
+Class to calculate various metrics about a clustering
+"""
+class MetricsCalculator:
+    def __init__(self, centroids, cluster_embeddings, embeddings_dim, cluster_assignment, file_prefix="./"):
+        self.centroids = centroids
+        self.file_prefix = file_prefix
+        self.cluster_embeddings = cluster_embeddings
+        self.cluster_assignment = cluster_assignment
+        self.embeddings_dim = embeddings_dim
+        self.distances = self.compute_distances(centroids, cluster_embeddings, embeddings_dim)
 
 
-def print_mem_usage():
-    print("torch.cuda.memory_allocated: %fGB"%(torch.cuda.memory_allocated(0)/1024/1024/1024))
-    print("torch.cuda.memory_reserved: %fGB"%(torch.cuda.memory_reserved(0)/1024/1024/1024))
-    print("torch.cuda.max_memory_reserved: %fGB"%(torch.cuda.max_memory_reserved(0)/1024/1024/1024))
+    """
+    clean up by removing the object containing pairwise distances
+    """
+    def __del__(self):
+        del self.distances
+        gc.collect()
+        if os.path.exists(self.file_prefix + 'dists.memmap'):
+            os.remove(self.file_prefix + 'dists.memmap')
+
+    """
+    computes distances between all points and centroids, and stores their values in a memmaped numpy array for easy access
+    """
+    def compute_distances(self, centroids, clusters, embeddings_dim):
+        # flatten clusters into one long list of points
+        points = torch.cat(clusters)
+        # create a memory mapped array to store the result in
+        distances_array = np.memmap(self.file_prefix + 'dists.memmap', dtype='float32', mode='w+', shape=(len(points),len(centroids)))
+        
+        # calculate maximum number of torch.float32 elements can fit on the gpu
+        memory = torch.cuda.get_device_properties(0).total_memory
+        num_elements_allowed = (memory*0.9) // torch.tensor([],dtype=torch.float32).element_size()
+
+        # determine the max amount of points and centroids we should admit in a single block to keep the memory acceptable
+        n_centroids = len(centroids)
+        n_points = len(points)
+        n_points_per_block = 15_000
+        n_centroids_per_block = 15_000
+        centroid_dim = math.ceil(n_centroids/n_centroids_per_block)
+        point_dim = math.ceil(n_points/n_points_per_block)
+
+        for block_idx in tqdm(range(dist.get_rank(), centroid_dim*point_dim, dist.get_world_size())):
+            # get coordinates of block in wider data
+            idx_centroids = (block_idx % centroid_dim)*n_centroids_per_block
+            upper_idx_centroids = min(idx_centroids+n_centroids_per_block, n_centroids)
+            idx_points = (block_idx % point_dim)*n_points_per_block
+            upper_idx_points = min(idx_points+n_points_per_block, n_points)
+            
+            # calculate distances for this block
+            block_points = points[idx_points:upper_idx_points,:]
+            block_centroids = centroids[idx_centroids:upper_idx_centroids, :].float()
+            distances = torch.cdist(block_points, block_centroids)
+
+            # store the distances in the correct area of the distances array
+            distances_array[idx_points:upper_idx_points,idx_centroids:upper_idx_centroids] = distances
+        
+        distances_array.flush()
+        return distances_array
+
+    """
+    fetch the inertia, which is the row-wise minimum of the total distances array
+    """
+    def inertia(self):
+        print("retrieving inertias")
+        inertias = np.min(self.distances, axis=1)
+
+        # use clusters to aggregate inertias by the cluster they belong to
+        cluster_lengths = torch.zeros(len(self.cluster_assignment))
+        cluster_sizes = [len(self.cluster_assignment[i]) for i in tqdm(range(len(self.cluster_assignment)))]
+        cluster_indices = list(itertools.chain([0], itertools.accumulate(cluster_sizes)))
+        cluster_inertias = [np.sum(inertias[cluster_indices[i]: cluster_indices[i+1]]) for i in tqdm(range(len(cluster_indices) - 1))]
+        
+        return torch.tensor(cluster_inertias)
 
 """
 Calculates the inertia of this clustering
