@@ -1,0 +1,8 @@
+Node IP: 10.251.87.220
+export LSCRATCH=/lscratch/23581111
+retrieving inertias
+retrieving inertias
+retrieving inertias
+retrieving inertias
+Inertias calculated for level 1
+Inertias calculated for level 1

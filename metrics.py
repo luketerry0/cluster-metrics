@@ -6,9 +6,8 @@ import numpy as np
 import tempfile
 from tqdm import tqdm
 import itertools
-# import wandb
+import wandb
 from PIL import Image
-from tensordict import MemoryMappedTensor
 import gc
 
 """
@@ -62,12 +61,18 @@ class MetricsCalculator:
             upper_idx_points = min(idx_points+n_points_per_block, n_points)
             
             # calculate distances for this block
-            block_points = points[idx_points:upper_idx_points,:]
-            block_centroids = centroids[idx_centroids:upper_idx_centroids, :].float()
-            distances = torch.cdist(block_points, block_centroids)
+            block_points = points[idx_points:upper_idx_points,:].clone().float().cpu().to(device="cuda")
+            block_centroids = centroids[idx_centroids:upper_idx_centroids, :].clone().float().cpu().to(device="cuda")
+            distances = torch.cdist(block_points, block_centroids).cpu()
 
             # store the distances in the correct area of the distances array
             distances_array[idx_points:upper_idx_points,idx_centroids:upper_idx_centroids] = distances
+
+            # clean up
+            del block_points
+            del block_centroids
+            del distances
+            gc.collect()
         
         distances_array.flush()
         return distances_array

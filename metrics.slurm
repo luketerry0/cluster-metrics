@@ -60,4 +60,5 @@ main.py \
 --path_to_stored_metrics="/ourdisk/hpc/ai2es/luketerry/metrics" \
 --base_path="/ourdisk/hpc/ai2es/luketerry" \
 --embeddings_path="/ourdisk/hpc/ai2es/luketerry/npy_laion_embeddings/laion_embeddings_shard_0.npy" \
---filename_key_path="/ourdisk/hpc/ai2es/luketerry/npy_laion_embeddings/filenames_shard_0.pkl"
+--filename_key_path="/ourdisk/hpc/ai2es/luketerry/npy_laion_embeddings/filenames_shard_0.pkl" \
+--filepath_origin="/scratch/luketerry/"
