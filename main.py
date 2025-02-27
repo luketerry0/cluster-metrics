@@ -57,7 +57,7 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH, FILEP
             
         else:
             for c in range(cfg.n_clusters[LEVEL - 1]):
-                this_cluster = torch.empty((0,768))
+                this_cluster = torch.empty((0,embeddings_dim))
                 for prev_cluster_idx in clusters[c]:
                     this_cluster = torch.cat((this_cluster, previous_level_clusters[prev_cluster_idx]))
                     cluster_indices.append(prev_cluster_idx)
@@ -102,16 +102,47 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH, FILEP
             # log the best and worst 5 clusters based on inertia
             cluster_order_indices = torch.argsort(inertia_tensor).tolist()
             half_clusters = math.floor(len(cluster_order_indices)/2)
-
-            for i in range(max(-5, half_clusters*-1), min(5, half_clusters), 1):
-                log_cluster(
-                    filepaths, 
-                    cluster_indices, 
-                    cluster_order_indices[i],
-                    f"Cluster order {i}: inertia={inertia_tensor[cluster_order_indices[i]]}",
-                    20,
-                    LEVEL - 1
+            worst_clusters = []
+            sampling_threshold = 20
+            n_sampled = 0
+            curr_idx = -1
+            # sample 5 best clusters
+            while n_sampled < 5:
+                if (len(curr_level_clusters[cluster_order_indices[curr_idx]]) >= sampling_threshold):
+                    log_cluster(
+                        filepaths, 
+                        cluster_indices, 
+                        cluster_order_indices[curr_idx],
+                        f"{curr_idx*-1}th best cluster: inertia={inertia_tensor[cluster_order_indices[curr_idx]]}",
+                        sampling_threshold,
+                        LEVEL - 1
                     )
+                    n_sampled += 1
+                curr_idx -= 1
+                if curr_idx*-1 == len(cluster_order_indices):
+                    print("No other clusters are big enough to be logged!")
+                    break
+
+            # sample 5 worst clusters
+            curr_idx = 0
+            n_sampled = 0
+            while n_sampled < 5:
+                if (len(curr_level_clusters[cluster_order_indices[curr_idx]]) >= sampling_threshold):
+                    log_cluster(
+                        filepaths, 
+                        cluster_indices, 
+                        cluster_order_indices[curr_idx],
+                        f"{curr_idx*-1}th worst cluster: inertia={inertia_tensor[cluster_order_indices[curr_idx]]}",
+                        sampling_threshold,
+                        LEVEL - 1
+                    )
+                    n_sampled += 1
+                curr_idx += 1
+                if curr_idx == len(cluster_order_indices):
+                    print("No other clusters are big enough to be logged!")
+                    break
+
+
 
             # log other things...
             inertia_list = inertia_tensor.tolist()
