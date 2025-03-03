@@ -5,7 +5,7 @@ from argparse import ArgumentParser
 import numpy as np
 import os
 import math
-import wandb
+# import wandb
 from metrics import inertia, simplified_silhouette, db_index, validation_simple_silhouettes, log_cluster, MetricsCalculator
 import pickle
 
@@ -18,15 +18,15 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH, FILEP
     torch.cuda.set_device(rank % torch.cuda.device_count())
     dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
 
-    if rank == 0:
-        # initialize wandb logging
-        run = wandb.init(
-            project="ssl-clustering-metrics",
-            entity='ai2es',
-            name=args.wandb_name,
-            dir=f'/ourdisk/hpc/ai2es/luketerry/wandbruns/{args.wandb_name}/metrics/wandb',
-            config=OmegaConf.to_container(cfg)
-        )   
+    # if rank == 0:
+    #     # initialize wandb logging
+    #     run = wandb.init(
+    #         project="ssl-clustering-metrics",
+    #         entity='ai2es',
+    #         name=args.wandb_name,
+    #         dir=f'/ourdisk/hpc/ai2es/luketerry/wandbruns/{args.wandb_name}/metrics/wandb',
+    #         config=OmegaConf.to_container(cfg)
+    #     )   
 
 
     # load the embeddings

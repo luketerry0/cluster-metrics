@@ -41,7 +41,12 @@ label_dist_format = []
 for i in range(NUM_CLUSTERS):
     label_dist_format.append(data[labels == i])
 
-metrics_calulator = MetricsCalculator(centroid_dist_format, label_dist_format, DATA_DIMENSION, data)
+# convert cluster assignment to a form the calculator expects
+assignment_dist_format = []
+for i in range(NUM_CLUSTERS):
+    curr_assignment = [i for i, x in enumerate(labels == i) if x]
+    assignment_dist_format.append(np.array(curr_assignment))
+metrics_calulator = MetricsCalculator(centroid_dist_format, label_dist_format, DATA_DIMENSION, assignment_dist_format)
 
 
 # compare inertia
