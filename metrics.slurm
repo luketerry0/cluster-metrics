@@ -8,7 +8,7 @@
 # Thread count, or the number of hypercores you plan to use.  This is not enforced.
 #SBATCH --cpus-per-task=32
 # The number of gpus you require each node to have
-#SBATCH --gres=gpu:4
+#SBATCH --gres=gpu:2
 # memory (RAM) you will use on each machine.  Provide an upper bound, this is not enforced
 #SBATCH --mem=64G
 # Where you would like your stdout and stderr to appear
@@ -23,7 +23,8 @@
 #SBATCH --mail-type=ALL
 # the working directory for your job.  This must exist.
 #SBATCH --chdir=/home/luketerry/cluster-metrics/
-#SBATCH --exclude=c829,c830
+#c829,c830
+# --exclude=c732,c733
 #################################################
 
 # this is how we get the ip address of the node that will be used for the master process
@@ -45,7 +46,23 @@ trial="$1" # something like "4_level_skyline_exp"
 source /home/luketerry/.wandb_api_key.sh
 wandb login $WANDB_API_KEY
 
+# copy our data to LSCRATCH to run
+# start_time=$(date +%s.%N)
+# cp /ourdisk/hpc/ai2es/luketerry/npy_laion_embeddings/laion_embeddings_shard_0.npy /lscratch/$SLURM_JOBID/embeddings.npy
+# chmod 777 /lscratch/$SLURM_JOBID/embeddings.npy
+# mid_time=$(date +%s.%N)
+# cp /ourdisk/hpc/ai2es/luketerry/npy_laion_embeddings/filenames_shard_0.pkl /lscratch/$SLURM_JOBID/filename-key.npy
+# chmod 777 /lscratch/$SLURM_JOBID/filename-key.npy
+# end_time=$(date +%s.%N)
+# t1=$(echo "scale=9; $mid_time - $start_time" | bc)
+# t2=$(echo "scale=9; $end_time - $mid_time" | bc)
+# ls /lscratch/$SLURM_JOBID/
+# echo "Time spent moving embeddings: $t1 seconds"
+# echo "Time spent moving filename key: $t2 seconds"
+
+
 # launching a run that will be executed over multiple compute nodes
+echo $SLURM_GPUS_PER_NODE
 srun torchrun \
 --nnodes $SLURM_JOB_NUM_NODES \
 --nproc_per_node 2 \
@@ -61,4 +78,4 @@ main.py \
 --base_path="/ourdisk/hpc/ai2es/luketerry" \
 --embeddings_path="/ourdisk/hpc/ai2es/luketerry/npy_laion_embeddings/laion_embeddings_shard_0.npy" \
 --filename_key_path="/ourdisk/hpc/ai2es/luketerry/npy_laion_embeddings/filenames_shard_0.pkl" \
---filepath_origin="/scratch/luketerry/"
+--filepath_origin="/lscratch/$SLURM_JOBID"

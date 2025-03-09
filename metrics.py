@@ -6,10 +6,50 @@ import numpy as np
 import tempfile
 from tqdm import tqdm
 import itertools
-# import wandb
+import wandb
 from PIL import Image
 import gc
 from time import perf_counter
+
+"""
+class to fetch blocks of points/distances from the memmap
+"""
+class BlockFetchIterable:
+    def __init__(self, distances_array, points, centroids):
+        self.points = points
+        self.centroids = centroids
+        self.distances_array = distances_array
+
+        # determine the max amount of points and centroids we should admit in a single block to keep the memory acceptable
+        self.n_centroids = len(self.centroids)
+        self.n_points = len(self.points)
+        self.n_points_per_block = 50_000
+        self.n_centroids_per_block = 50_000
+
+        self.centroid_dim = math.ceil(self.n_centroids/self.n_centroids_per_block)
+        self.point_dim = math.ceil(self.n_points/self.n_points_per_block)
+        blocks_per_rank = math.ceil(dist.get_world_size() / (self.point_dim*self.centroid_dim))
+        self.curr_block = dist.get_rank()*blocks_per_rank
+        self.ending_block = min(self.curr_block+blocks_per_rank, self.centroid_dim*self.point_dim)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.curr_block < self.ending_block:
+            # get coordinates of block in wider data
+            idx_centroids = (self.curr_block // self.point_dim)*self.n_centroids_per_block
+            upper_idx_centroids = min(idx_centroids+self.n_centroids_per_block, self.n_centroids)
+            idx_points = (self.curr_block // self.centroid_dim)*self.n_points_per_block
+            upper_idx_points = min(idx_points+self.n_points_per_block, self.n_points)
+
+            print(idx_centroids)
+            print(upper_idx_centroids)
+            block_points = self.points[idx_points:upper_idx_points,:].clone().float().cpu().to(device="cuda")
+            block_centroids = self.centroids[idx_centroids:upper_idx_centroids, :].clone().float().cpu().to(device="cuda")
+            
+            curr_block += 1
+            return block_points, block_centroids, curr_block - 1
 
 """
 Class to calculate various metrics about a clustering
@@ -28,11 +68,11 @@ class MetricsCalculator:
     clean up by removing the object containing pairwise distances
     """
     def __del__(self):
-        # if dist.get_rank() == 0:
-        del self.distances
-        gc.collect()
-        if os.path.exists(self.file_prefix + 'dists.memmap'):
-            os.remove(self.file_prefix + 'dists.memmap')
+        if dist.get_rank() == 0:
+            del self.distances
+            gc.collect()
+            if os.path.exists(self.file_prefix + 'dists.memmap'):
+                os.remove(self.file_prefix + 'dists.memmap')
 
     """
     computes distances between all points and centroids, and stores their values in a memmaped numpy array for easy access
@@ -43,52 +83,37 @@ class MetricsCalculator:
         # flatten clusters into one long list of points
         points = torch.cat(clusters)
         # create a memory mapped array to store the result in
-        distances_array = np.memmap(self.file_prefix + 'dists.memmap', dtype='float32', mode='w+', shape=(len(points),len(centroids)))
-        
+        t_mem_start = perf_counter()
+        distances_array = np.memmap(self.file_prefix + '/dists.memmap', dtype='float32', mode='w+', shape=(len(points),len(centroids)))
+        t_mem_end = perf_counter()
+        print(f"Time taken to create distances memmap: {t_mem_end - t_mem_start}")
+
         # calculate maximum number of torch.float32 elements can fit on the gpu
         memory = torch.cuda.mem_get_info()[1]
         num_elements_allowed = (memory*0.8) // torch.tensor([],dtype=torch.float32).element_size()
 
-        # determine the max amount of points and centroids we should admit in a single block to keep the memory acceptable
-        point_block_ratio = 0.1
-        n_centroids = len(centroids)
-        n_points = len(points)
-        n_points_per_block = 10_000
-        n_centroids_per_block = 10_000
-        centroid_dim = math.ceil(n_centroids/n_centroids_per_block)
-        point_dim = math.ceil(n_points/n_points_per_block)
-        n_blocks_per_rank = math.ceil((centroid_dim*point_dim)/dist.get_world_size())
+        # use block fetch iterable to fetch the data
+        blockfactory = BlockFetchIterable(distances_array, points, clusters)
 
-        # timing
-        t2 = perf_counter() 
-        beginning_block = dist.get_rank()*n_blocks_per_rank
-        for block_idx in tqdm(range(beginning_block, min(beginning_block + n_blocks_per_rank, (centroid_dim*point_dim)))):
-            # get coordinates of block in wider data
-            idx_centroids = (block_idx % centroid_dim)*n_centroids_per_block
-            upper_idx_centroids = min(idx_centroids+n_centroids_per_block, n_centroids)
-            idx_points = (block_idx % point_dim)*n_points_per_block
-            upper_idx_points = min(idx_points+n_points_per_block, n_points)
-            
+        for block_points, block_centroids, _ in blockfactory:
             # calculate distances for this block
-            block_points = points[idx_points:upper_idx_points,:].clone().float().cpu().to(device="cuda")
-            block_centroids = centroids[idx_centroids:upper_idx_centroids, :].clone().float().cpu().to(device="cuda")
             distances = torch.cdist(block_points, block_centroids).cpu()
 
             # store the distances in the correct area of the distances array
             distances_array[idx_points:upper_idx_points,idx_centroids:upper_idx_centroids] = distances
+            t_store = perf_counter()
 
             # clean up
             del block_points
             del block_centroids
             del distances
             gc.collect()
-        
+            distances_array.flush()
+
+        torch.distributed.barrier() 
         t3 = perf_counter()
-        distances_array.flush()
 
         # print some stuff about the time
-        print(f"Time spent in function {t3 - t1}")
-        print(f"Time spent in calculation loop {t3 - t2}")
         return distances_array
 
     """
@@ -111,19 +136,22 @@ class MetricsCalculator:
 
     # optimized version to test
     def inertia(self):
-        print("retrieving inertias")
-        t1 = perf_counter()
+        if dist.get_rank() == 0:
+            print("retrieving inertias")
+            t1 = perf_counter()
 
-        # use clusters to aggregate inertias
-        cluster_sizes = [len(self.cluster_assignment[i]) for i in tqdm(range(len(self.cluster_assignment)))]
-        cluster_indices = list(itertools.chain([0], itertools.accumulate(cluster_sizes)))
+            # use clusters to aggregate inertias
+            cluster_sizes = [len(self.cluster_assignment[i]) for i in tqdm(range(len(self.cluster_assignment)))]
+            cluster_indices = list(itertools.chain([0], itertools.accumulate(cluster_sizes)))
+            cluster_inertias = []
 
-        for i in tqdm(range(len(cluster_indices) - 1)):
-            cluster_inertias = [np.sum(self.distances[cluster_indices[i]: cluster_indices[i+1], i]) ]
-        t2 = perf_counter()
-        print(f"Time spent accessing inertias: {t2 - t1}")
+            for i in tqdm(range(len(cluster_indices) - 1)):
+                cluster_inertias.append(np.sum(self.distances[cluster_indices[i]: cluster_indices[i+1], i]))
 
-        return torch.tensor(cluster_inertias)
+            t2 = perf_counter()
+            print(f"Time spent accessing inertias: {t2 - t1}")
+
+            return torch.tensor(cluster_inertias)
 
 """
 Calculates the inertia of this clustering
@@ -344,6 +372,8 @@ log_step: the wandb step to log images with
 def log_cluster(filepaths, cluster_indices, idx, wandb_caption, num_images, log_step):
     # sample from the cluster and log to wandb
     curr_cluster_indices = cluster_indices[idx]
+    # print(cluster_indices)
+    print(curr_cluster_indices)
     sample = [Image.open(filepaths[curr_cluster_indices[x]][0]) for x in range(num_images)]
 
     # log the image(s) to wandb
