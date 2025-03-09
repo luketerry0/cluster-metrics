@@ -12,44 +12,48 @@ import gc
 from time import perf_counter
 
 """
-class to fetch blocks of points/distances from the memmap
+Iterable which fetchesn  a single block of the points/centroids to store in the memmap
 """
 class BlockFetchIterable:
-    def __init__(self, distances_array, points, centroids):
+    def __init__(self, points, centroids):
+        # store/initialize data
         self.points = points
         self.centroids = centroids
-        self.distances_array = distances_array
+        self.curr_block = 0
 
-        # determine the max amount of points and centroids we should admit in a single block to keep the memory acceptable
-        self.n_centroids = len(self.centroids)
-        self.n_points = len(self.points)
-        self.n_points_per_block = 50_000
-        self.n_centroids_per_block = 50_000
+        # determine the dimension of each block and the dimension of the data
+        self.n_points = len(points)
+        self.n_centroids = len(centroids)
+        self.n_points_per_block = 10_000 # max number of points per block
+        self.n_centroids_per_block = 10_000 # max number of centroids per block
+        self.points_dim = math.ceil(self.n_points / self.n_points_per_block)
+        self.centroids_dim = math.ceil(self.n_centroids / self.n_centroids_per_block)
+        self.n_blocks = self.points_dim*self.centroids_dim
 
-        self.centroid_dim = math.ceil(self.n_centroids/self.n_centroids_per_block)
-        self.point_dim = math.ceil(self.n_points/self.n_points_per_block)
-        blocks_per_rank = math.ceil(dist.get_world_size() / (self.point_dim*self.centroid_dim))
-        self.curr_block = dist.get_rank()*blocks_per_rank
-        self.ending_block = min(self.curr_block+blocks_per_rank, self.centroid_dim*self.point_dim)
+        print(f"Initialized iterable, {self.n_points} points, {self.n_centroids} centroids")
 
     def __iter__(self):
         return self
 
     def __next__(self):
-        if self.curr_block < self.ending_block:
-            # get coordinates of block in wider data
-            idx_centroids = (self.curr_block // self.point_dim)*self.n_centroids_per_block
-            upper_idx_centroids = min(idx_centroids+self.n_centroids_per_block, self.n_centroids)
-            idx_points = (self.curr_block // self.centroid_dim)*self.n_points_per_block
-            upper_idx_points = min(idx_points+self.n_points_per_block, self.n_points)
-
-            print(idx_centroids)
-            print(upper_idx_centroids)
-            block_points = self.points[idx_points:upper_idx_points,:].clone().float().cpu().to(device="cuda")
-            block_centroids = self.centroids[idx_centroids:upper_idx_centroids, :].clone().float().cpu().to(device="cuda")
+        # fetch the block
+        if self.curr_block < self.n_blocks:
+            points_lower_idx = (self.curr_block % self.points_dim)*self.n_points_per_block
+            centroids_lower_idx = (self.curr_block // self.points_dim)*self.n_centroids_per_block
             
-            curr_block += 1
-            return block_points, block_centroids, curr_block - 1
+            points_upper_idx = min(points_lower_idx + self.n_points_per_block, self.n_points)
+            centroids_upper_idx = min(centroids_lower_idx + self.n_centroids_per_block, self.n_centroids)
+
+            block_points = self.points[points_lower_idx:points_upper_idx, ]
+            block_centroids = self.points[centroids_lower_idx:centroids_upper_idx, ]
+
+            print(f"Fetching block {self.curr_block}, {points_lower_idx}, {points_upper_idx}, {centroids_lower_idx}, {centroids_upper_idx}")
+
+            # increment the blockid
+            self.curr_block += 1
+
+            return block_points, block_centroids, points_lower_idx, points_upper_idx, centroids_lower_idx, centroids_upper_idx
+        raise StopIteration
 
 """
 Class to calculate various metrics about a clustering
@@ -93,14 +97,15 @@ class MetricsCalculator:
         num_elements_allowed = (memory*0.8) // torch.tensor([],dtype=torch.float32).element_size()
 
         # use block fetch iterable to fetch the data
-        blockfactory = BlockFetchIterable(distances_array, points, clusters)
+        blockfactory = BlockFetchIterable(points, clusters)
 
-        for block_points, block_centroids, _ in blockfactory:
+        for block_points, block_centroids, pl, pu, cl, cu in blockfactory:
             # calculate distances for this block
             distances = torch.cdist(block_points, block_centroids).cpu()
+            print(f"Distances shape: {distances.shape}")
 
             # store the distances in the correct area of the distances array
-            distances_array[idx_points:upper_idx_points,idx_centroids:upper_idx_centroids] = distances
+            distances_array[pl:pu,cl:cu] = distances
             t_store = perf_counter()
 
             # clean up
