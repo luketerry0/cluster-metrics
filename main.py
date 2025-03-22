@@ -6,12 +6,12 @@ import numpy as np
 import os
 import math
 import wandb
-from metrics import inertia, simplified_silhouette, db_index, validation_simple_silhouettes, log_cluster, MetricsCalculator
+from metrics import log_cluster, MetricsCalculator
 import pickle
 from time import perf_counter
-from torch.distributed.elastic.multiprocessing.errors import record
+# from torch.distributed.elastic.multiprocessing.errors import record
 
-@record
+# @record
 def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH, FILEPATH_ORIGIN):
     # initialize a process group
     world_size = int(os.environ["WORLD_SIZE"])
@@ -20,7 +20,6 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH, FILEP
     d_id = rank % torch.cuda.device_count()
     torch.cuda.set_device(d_id)
     dist.init_process_group(backend="nccl", rank=rank, world_size=world_size, device_id = torch.device(f"cuda:{d_id}"))
-    print(dist.get_rank())
     
     if dist.get_rank() == 0:
         print(f"FILEPATH_ORIGIN: {FILEPATH_ORIGIN}")
@@ -31,7 +30,7 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH, FILEP
             project="ssl-clustering-metrics",
             entity='ai2es',
             name=args.wandb_name,
-            dir=f'/ourdisk/hpc/ai2es/luketerry/wandbruns/{args.wandb_name}/metrics/wandb',
+            # dir=f'/ourdisk/hpc/ai2es/luketerry/wandbruns/{args.wandb_name}/metrics/wandb',
             config=OmegaConf.to_container(cfg)
         )   
 
@@ -45,7 +44,7 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH, FILEP
     current_step = 0
 
     for LEVEL in range(1, config.n_levels + 1): #TODO make this start at 1 again
-        print(f"beginning level {1}")
+        print(f"beginning level {LEVEL}")
         # clusters in the current level
         clusters = np.load(f'{BASE_PATH}/{CLUSTER_SET}/level{LEVEL}/sorted_clusters.npy', allow_pickle=True)
 
@@ -67,12 +66,14 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH, FILEP
         else:
             for c in range(cfg.n_clusters[LEVEL - 1]):
                 curr_prev_clusters = []
+                curr_prev_indices = []
                 
                 for prev_cluster_idx in clusters[c]:
                     curr_prev_clusters.append(previous_level_clusters[prev_cluster_idx])
-                    cluster_indices.append(previous_cluster_indices[prev_cluster_idx])
+                    curr_prev_indices.append(previous_cluster_indices[prev_cluster_idx])
                 this_cluster = torch.cat(curr_prev_clusters)
                 curr_level_clusters.append(this_cluster)
+                cluster_indices.append(np.concatenate(curr_prev_indices))
 
         t2 = perf_counter()
         print(f"Time spent compiling embedding locations: {t2 - t1}")
@@ -83,11 +84,11 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH, FILEP
         # calculate the inertia of this level's clusters
         storage_path = f'{PATH_TO_STORED_METRICS}/{CLUSTER_SET}/level{LEVEL}/'
 
-        metrics_calulator = MetricsCalculator(centroids, curr_level_clusters, embeddings_dim, clusters, FILEPATH_ORIGIN)
+        metrics_calulator = MetricsCalculator(centroids, curr_level_clusters, embeddings_dim, FILEPATH_ORIGIN)
+
+        inertia_tensor = metrics_calulator.inertia()
 
         if dist.get_rank() == 0:
-            inertia_tensor = metrics_calulator.inertia()
-
             # inertia_tensor = inertia(centroids, curr_level_clusters)
             t1 = perf_counter()
             if not os.path.exists(storage_path):
@@ -116,6 +117,7 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH, FILEP
         # print(f'Davies-Bouldin Index calculated for level {LEVEL}')
 
         # sample images from cluster with the highest and lowest inertias to wandb
+        
         if dist.get_rank() == 0:
             # read in filepaths to pictures
             ta = perf_counter()
@@ -125,63 +127,64 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH, FILEP
             print(f"Time spent loading filepaths pickle: {tb-ta}")
 
             # log the best and worst 5 clusters based on inertia
-            cluster_order_indices = torch.argsort(inertia_tensor).tolist()
-            half_clusters = math.floor(len(cluster_order_indices)/2)
+            cluster_ranking = torch.argsort(inertia_tensor)
             worst_clusters = []
             sampling_threshold = 10
             n_sampled = 0
-            curr_idx = -1
+            curr_idx = 0
             # sample 5 best clusters
             while n_sampled < 5:
-                ta = perf_counter()
-                if (len(curr_level_clusters[cluster_order_indices[curr_idx]]) >= sampling_threshold):
+                cluster_idx = cluster_ranking[curr_idx]
+                print(cluster_idx)
+                print(inertia_tensor[cluster_idx])
+                print(inertia_tensor)
+                if (len(curr_level_clusters[cluster_idx]) >= sampling_threshold):
                     log_cluster(
                         filepaths, 
                         cluster_indices, 
-                        cluster_order_indices[curr_idx],
-                        f"{curr_idx*-1}th best cluster, level {LEVEL}: inertia={inertia_tensor[cluster_order_indices[curr_idx]]}",
-                        sampling_threshold,
-                        LEVEL - 1
-                    )
-                    n_sampled += 1
-                curr_idx -= 1
-                if curr_idx*-1 >= len(cluster_order_indices):
-                    print(f"No other clusters are big enough to be logged! Logged {curr_idx*-1 - 1} clusters")
-                    break
-                tb = perf_counter()
-                print(f"time to log a best cluster: {tb - ta}")
-
-            # sample 5 worst clusters
-            curr_idx = 0
-            n_sampled = 0
-            while n_sampled < 5:
-                if (len(curr_level_clusters[cluster_order_indices[curr_idx]]) >= sampling_threshold):
-                    log_cluster(
-                        filepaths, 
-                        cluster_indices, 
-                        cluster_order_indices[curr_idx],
-                        f"{curr_idx*-1}th worst cluster, level {LEVEL}: inertia={inertia_tensor[cluster_order_indices[curr_idx]]}",
+                        cluster_idx - 1,
+                        f"{curr_idx}th best cluster, level {LEVEL}: inertia={inertia_tensor[cluster_idx]}",
                         sampling_threshold,
                         LEVEL - 1
                     )
                     n_sampled += 1
                 curr_idx += 1
-                if curr_idx >= len(cluster_order_indices):
+                if n_sampled >= len(inertia_tensor):
                     print(f"No other clusters are big enough to be logged! Logged {curr_idx} clusters")
                     break
+                print(f"time to log a best cluster: {tb - ta}")
+
+        #     # # sample 5 worst clusters
+        #     # curr_idx = 0
+        #     # n_sampled = 0
+        #     # while n_sampled < 5:
+        #     #     if (len(curr_level_clusters[cluster_order_indices[curr_idx]]) >= sampling_threshold):
+        #     #         log_cluster(
+        #     #             filepaths, 
+        #     #             cluster_indices, 
+        #     #             cluster_order_indices[curr_idx],
+        #     #             f"{curr_idx}th worst cluster, level {LEVEL}: inertia={inertia_tensor[cluster_order_indices[curr_idx]]}",
+        #     #             sampling_threshold,
+        #     #             LEVEL - 1
+        #     #         )
+        #     #         n_sampled += 1
+        #     #     curr_idx += 1
+        #     #     if curr_idx >= len(cluster_order_indices):
+        #     #         print(f"No other clusters are big enough to be logged! Logged {curr_idx} clusters")
+        #     #         break
 
 
 
-            # log other things...
-            ta = perf_counter()
-            inertia_list = inertia_tensor.tolist()
-            tb = perf_counter()
-            print(f"Time to convert inertia to list: {tb-ta}")
-            wandb.log({"average inertia": sum(inertia_list)/len(inertia_list)}, step=LEVEL-1)
-            tc = perf_counter()
-            print(f"Time to log avg. Inertia to wandb: {tc - tb}")
-            del inertia_tensor
-        #     wandb.log({"davies bouldin index ": db_tensor.tolist()}, step = LEVEL-1)
+        #     # log other things...
+        #     ta = perf_counter()
+        #     inertia_list = inertia_tensor.tolist()
+        #     tb = perf_counter()
+        #     print(f"Time to convert inertia to list: {tb-ta}")
+        #     wandb.log({"average inertia": sum(inertia_list)/len(inertia_list)}, step=LEVEL-1)
+        #     tc = perf_counter()
+        #     print(f"Time to log avg. Inertia to wandb: {tc - tb}")
+        #     del inertia_tensor
+        # #     wandb.log({"davies bouldin index ": db_tensor.tolist()}, step = LEVEL-1)
         #     wandb.log({"simplified silhouette coeffecient": max(silhouette_tensor.tolist())}, step = LEVEL-1)
 
         # del db_tensor
@@ -213,4 +216,5 @@ if __name__=="__main__":
 
     print(f"fp path: {args.filename_key_path}")
     main(cfg, args.base_path, args.cluster_set, args.path_to_stored_metrics, args.filename_key_path, args.filepath_origin)
+    dist.barrier()
     dist.destroy_process_group()
