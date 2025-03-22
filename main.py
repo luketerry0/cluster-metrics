@@ -126,6 +126,9 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH, FILEP
             tb = perf_counter()
             print(f"Time spent loading filepaths pickle: {tb-ta}")
 
+            # credit to https://stackoverflow.com/questions/9647202/ordinal-numbers-replacement
+            ordinal = lambda n: "%d%s" % (n,"tsnrhtdd"[(n//10%10!=1)*(n%10<4)*n%10::4])
+
             # log the best and worst 5 clusters based on inertia
             cluster_ranking = torch.argsort(inertia_tensor)
             worst_clusters = []
@@ -142,46 +145,43 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH, FILEP
                     log_cluster(
                         filepaths, 
                         cluster_indices, 
-                        cluster_idx - 1,
-                        f"{curr_idx}th best cluster, level {LEVEL}: inertia={inertia_tensor[cluster_idx]}",
+                        cluster_idx,
+                        f"{ordinal(n_sampled + 1)} best cluster, level {LEVEL}: inertia={inertia_tensor[cluster_idx]} (cluster idx: {cluster_idx})",
                         sampling_threshold,
                         LEVEL - 1
                     )
                     n_sampled += 1
                 curr_idx += 1
-                if n_sampled >= len(inertia_tensor):
+                if curr_idx >= len(inertia_tensor):
                     print(f"No other clusters are big enough to be logged! Logged {curr_idx} clusters")
                     break
                 print(f"time to log a best cluster: {tb - ta}")
 
-        #     # # sample 5 worst clusters
-        #     # curr_idx = 0
-        #     # n_sampled = 0
-        #     # while n_sampled < 5:
-        #     #     if (len(curr_level_clusters[cluster_order_indices[curr_idx]]) >= sampling_threshold):
-        #     #         log_cluster(
-        #     #             filepaths, 
-        #     #             cluster_indices, 
-        #     #             cluster_order_indices[curr_idx],
-        #     #             f"{curr_idx}th worst cluster, level {LEVEL}: inertia={inertia_tensor[cluster_order_indices[curr_idx]]}",
-        #     #             sampling_threshold,
-        #     #             LEVEL - 1
-        #     #         )
-        #     #         n_sampled += 1
-        #     #     curr_idx += 1
-        #     #     if curr_idx >= len(cluster_order_indices):
-        #     #         print(f"No other clusters are big enough to be logged! Logged {curr_idx} clusters")
-        #     #         break
+            # sample 5 worst clusters
+            curr_idx = -1
+            n_sampled = 0
+            while n_sampled < 5:
+                cluster_idx = cluster_ranking[curr_idx]
+                if (len(curr_level_clusters[cluster_idx]) >= sampling_threshold):
+                    log_cluster(
+                        filepaths, 
+                        cluster_indices, 
+                        cluster_idx,
+                        f"{ordinal(n_sampled + 1)} worst cluster, level {LEVEL}: inertia={inertia_tensor[cluster_idx]}",
+                        sampling_threshold,
+                        LEVEL - 1
+                    )
+                    n_sampled += 1
+                curr_idx -= 1
+                if curr_idx*-1 >= len(inertia_tensor):
+                    print(f"No other clusters are big enough to be logged! Logged {curr_idx} clusters")
+                    break
 
 
 
-        #     # log other things...
-        #     ta = perf_counter()
-        #     inertia_list = inertia_tensor.tolist()
-        #     tb = perf_counter()
-        #     print(f"Time to convert inertia to list: {tb-ta}")
-        #     wandb.log({"average inertia": sum(inertia_list)/len(inertia_list)}, step=LEVEL-1)
-        #     tc = perf_counter()
+            # log other things...
+            inertia_list = inertia_tensor.tolist()
+            wandb.log({"average inertia": sum(inertia_list)/len(inertia_list)}, step=LEVEL-1)
         #     print(f"Time to log avg. Inertia to wandb: {tc - tb}")
         #     del inertia_tensor
         # #     wandb.log({"davies bouldin index ": db_tensor.tolist()}, step = LEVEL-1)

@@ -96,7 +96,7 @@ class MetricsCalculator:
         dest[al:au, bl:bu] = data[:, :]
         dest.flush()
         del dest
-        # print(f"writing points {al} to {au} and cents {bl} to {bu}")
+        print(f"writing points {al} to {au} and cents {bl} to {bu}")
         return True
 
     """
@@ -112,12 +112,14 @@ class MetricsCalculator:
         x_dim = len(points)
         y_dim = len(centroids)
         print(f"DIMENSIONS: {x_dim}, {y_dim}")
-        if dist.get_rank() == 0:
+        if (dist.get_rank() % int(os.environ["LOCAL_WORLD_SIZE"])) == 0:
             distances_array = np.memmap(
                 self.file_prefix + '/dists.memmap', 
                 dtype='float32', mode='w+', 
                 shape=(x_dim,y_dim))
             del distances_array
+            print(f"rank {dist.get_rank()} created map at {self.file_prefix + '/dists.memmap'}")
+        print(f"rank {dist.get_rank()} at checkpoint")
         dist.barrier()
         distances_array = np.memmap(
             self.file_prefix + '/dists.memmap', 
@@ -193,7 +195,11 @@ class MetricsCalculator:
         t2 = perf_counter()
         iner_tensor = torch.tensor(cluster_inertias).to(device="cuda")
         # print(f"DIST: {dist.get_rank()}, inertia: {iner_tensor}")
-        dist.all_reduce(iner_tensor, op=dist.ReduceOp.MAX)
+        # ensure that the correct inertia is calculated, even if ranks don't have the whole memmap
+        dist.all_reduce(iner_tensor, op=dist.ReduceOp.SUM)
+        # corrects for the inertia being counted multiple times if more than one rank shares a node
+        iner_tensor = iner_tensor / int(os.environ["LOCAL_WORLD_SIZE"])
+
         if dist.get_rank() == 0:
             print("INERTIA::")
             print(iner_tensor)

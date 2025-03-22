@@ -23,7 +23,7 @@
 #SBATCH --mail-type=ALL
 # the working directory for your job.  This must exist.
 #SBATCH --chdir=/home/luketerry/cluster-metrics/
-#SBATCH --exclude=c829,c830
+# --exclude=c829,c830
 #################################################
 
 # this is how we get the ip address of the node that will be used for the master process
@@ -78,4 +78,4 @@ main.py \
 --base_path="/ourdisk/hpc/ai2es/luketerry" \
 --embeddings_path="/lscratch/$SLURM_JOBID/embeddings.npy" \
 --filename_key_path="/lscratch/$SLURM_JOBID/filename-key.npy" \
---filepath_origin="/scratch/luketerry/$SLURM_JOBID"
+--filepath_origin="/lscratch/$SLURM_JOBID"
