@@ -22,19 +22,26 @@ import sys
 Iterable which fetchesn  a single block of the points/centroids to store in the memmap
 """
 class BlockFetchDataset(Dataset):
-    def __init__(self, points, centroids):
+    def __init__(self, points, centroids, block_size):
         # store/initialize data
-        self.points = points.float()
-        self.centroids = centroids.float()
+        self.points = points
+        self.centroids = centroids
 
         # determine the dimension of each block and the dimension of the data
         self.n_points = len(points)
         self.n_centroids = len(centroids)
-        self.block_size = 11_000
-        self.n_points_per_block = min(self.block_size, self.n_points) # max number of points per block
-        self.n_centroids_per_block = min(self.block_size, self.n_centroids) # max number of centroids per block
+        items_per_block = block_size
+        if self.n_centroids > items_per_block:
+            self.n_points_per_block = 1
+            self.n_cents_per_block = items_per_block
+        else:
+            self.n_cents_per_block = self.n_centroids
+            self.n_points_per_block = math.ceil(items_per_block/self.n_centroids)
+        self.centroids_dim = math.ceil(self.n_centroids / self.n_cents_per_block)
         self.points_dim = math.ceil(self.n_points / self.n_points_per_block)
-        self.centroids_dim = math.ceil(self.n_centroids / self.n_centroids_per_block)
+        # print(f"point dim {self.points_dim}")
+        # print(f"cent dim {self.centroids_dim}")
+
         self.n_blocks = self.points_dim*self.centroids_dim
 
         print(f"Initialized iterable, {self.n_points} points, {self.n_centroids} centroids, {self.n_blocks} blocks")
@@ -45,14 +52,15 @@ class BlockFetchDataset(Dataset):
 
     def __getitem__(self, idx):
         # fetch the block
-        points_lower_idx = (idx % self.points_dim)*self.n_points_per_block
-        centroids_lower_idx = (idx // self.points_dim)*self.n_centroids_per_block
+        points_lower_idx = (idx // self.centroids_dim)*self.n_points_per_block
+        centroids_lower_idx = (idx % self.centroids_dim)*self.n_cents_per_block
+
         
         points_upper_idx = min(points_lower_idx + self.n_points_per_block, self.n_points)
-        centroids_upper_idx = min(centroids_lower_idx + self.n_centroids_per_block, self.n_centroids)
+        centroids_upper_idx = min(centroids_lower_idx + self.n_cents_per_block, self.n_centroids)
 
-        block_points = self.points[points_lower_idx:points_upper_idx, ].to(device="cuda")
-        block_centroids = self.centroids[centroids_lower_idx:centroids_upper_idx, ].to(device="cuda")
+        block_points = self.points[points_lower_idx:points_upper_idx, ]
+        block_centroids = self.centroids[centroids_lower_idx:centroids_upper_idx, ]
 
         # print(f"fetching: {points_lower_idx} to {points_upper_idx} points, {centroids_lower_idx} to {centroids_upper_idx} centroids")
         return block_points, block_centroids, points_upper_idx, points_lower_idx, centroids_upper_idx, centroids_lower_idx, idx
@@ -64,8 +72,9 @@ class BlockFetchDataset(Dataset):
 Class to calculate various metrics about a clustering
 """
 class MetricsCalculator:
-    def __init__(self, centroids, cluster_embeddings, embeddings_dim, file_prefix="./"):
+    def __init__(self, centroids, cluster_embeddings, embeddings_dim, file_prefix="./", block_size=10_000):
         self.dtype = torch.float32
+        self.block_size = block_size
         self.centroids = centroids.to(self.dtype)
         self.file_prefix = file_prefix
         self.cluster_embeddings = cluster_embeddings
@@ -87,17 +96,33 @@ class MetricsCalculator:
     """
     helper function to write to a memmap in a new thread
     """
-    def write_to_memmap(self, x_dim, y_dim, al, au, bl, bu, data, idx):
+    def write_to_memmap(self, x_dim, y_dim, al, au, bl, bu, points, centroids, idx):
+        a = perf_counter()
+        try:
+            #calculate distance
+            data = torch.cdist(points.to(device="cuda").to(torch.float32), centroids.to(device="cuda").to(torch.float32)).cpu()
+        except OutOfMemoryError:
+            print("RAN OUT OF GPU MEMORY")
+            raise OutOfMemoryError
+        # print(f"beginning block {idx}")
+        # print(f"rank: {dist.get_rank()}, block: {idx}, al: {al}, bl: {bl}, data: {data}., shape {(au-al, bu-bl)} \n")
         dest = np.memmap(
             self.file_prefix + '/dists.memmap', 
             dtype='float32', mode='r+', 
-            shape=(x_dim, y_dim),
+            shape=(au-al, bu-bl),
+            offset=np.dtype(np.float32).itemsize*((al*y_dim)+bl)
             )
-        dest[al:au, bl:bu] = data[:, :]
+        dest[:,:] = data[:, :]
+
         dest.flush()
         del dest
-        print(f"writing points {al} to {au} and cents {bl} to {bu}")
+        del data
+        del points
+        del centroids
+        b = perf_counter()
+        print(f"writing block {idx} in {b - a}")
         return True
+            
 
     """
     computes distances between all points and centroids, and stores their values in a memmaped numpy array for easy access
@@ -107,6 +132,7 @@ class MetricsCalculator:
         t1 = perf_counter() 
         # flatten clusters into one long list of points
         points = torch.cat(clusters).to(self.dtype)
+        centroids = centroids.to(self.dtype)
         # create a memory mapped array to store the result in
         t_mem_start = perf_counter()
         x_dim = len(points)
@@ -129,31 +155,30 @@ class MetricsCalculator:
         print(f"Time taken to create distances memmap: {t_mem_end - t_mem_start}")
 
         # use distributed sampler to fetch the data
-        blockDataSet = BlockFetchDataset(points, centroids)
-        blockSampler = DistributedSampler(blockDataSet, shuffle=False)
-        blockLoader = DataLoader(blockDataSet, batch_size = 1, sampler=blockSampler)
+        blockDataSet = BlockFetchDataset(points, centroids,self.block_size)
+        blockLoader = DataLoader(blockDataSet, batch_size = 1)
         n_centroids = len(clusters)
 
         t_begin = perf_counter()
         coroutines = []
         with ThreadPoolExecutor(max_workers=64) as executor:
             for block_points, block_centroids, pu, pl, cu, cl, idx in blockLoader:
-                # calculate distances for this block
-                distances = torch.cdist(block_points, block_centroids).cpu()
+                if int(idx) % dist.get_world_size() == dist.get_rank():
+                    # store the distances in the correct area of the distances array
+                    coroutines.append(
+                        executor.submit(self.write_to_memmap, x_dim, y_dim ,pl, pu,cl, cu,block_points, block_centroids, idx)
+                    )
+                    # self.write_to_memmap(x_dim, y_dim, pl, pu, cl, cu, block_points, block_centroids, idx)
 
-                # store the distances in the correct area of the distances array
-                coroutines.append(
-                    executor.submit(self.write_to_memmap, x_dim, y_dim ,pl, pu,cl, cu,distances, idx)
-                )
 
                 # clean up
                 del block_points
                 del block_centroids
-                del distances
                 gc.collect()
 
         # wait for all the coroutines to finish
         test = concurrent.futures.wait(coroutines)
+        print(test)
         torch.distributed.barrier()
         
 
@@ -170,7 +195,7 @@ class MetricsCalculator:
         distances_array = np.memmap(
             self.file_prefix + '/dists.memmap', 
             dtype='float32', mode='r', 
-            shape=(len(points),len(centroids)))
+            shape=(x_dim,y_dim))
 
         return distances_array
 
@@ -194,7 +219,7 @@ class MetricsCalculator:
 
         t2 = perf_counter()
         iner_tensor = torch.tensor(cluster_inertias).to(device="cuda")
-        # print(f"DIST: {dist.get_rank()}, inertia: {iner_tensor}")
+        print(f"DIST: {dist.get_rank()}, inertia: {iner_tensor}")
         # ensure that the correct inertia is calculated, even if ranks don't have the whole memmap
         dist.all_reduce(iner_tensor, op=dist.ReduceOp.SUM)
         # corrects for the inertia being counted multiple times if more than one rank shares a node

@@ -15,7 +15,7 @@
 #SBATCH --output=/home/luketerry/cluster-metrics/logs/out-%j.txt
 #SBATCH --error=/home/luketerry/cluster-metrics/logs/err-%j.txt
 # The maximum time your job can take (most partitions limit this)
-#SBATCH --time=12:00:00
+#SBATCH --time=24:00:00
 # job name which will appear in queue
 #SBATCH --job-name=metrics
 # if you fill this out slurm will email you job status updates, consider sending them to a folder.
@@ -23,7 +23,8 @@
 #SBATCH --mail-type=ALL
 # the working directory for your job.  This must exist.
 #SBATCH --chdir=/home/luketerry/cluster-metrics/
-# --exclude=c829,c830
+#--array=1-1000:30%1
+#SBATCH --exclude=c732,c733,c980
 #################################################
 
 # this is how we get the ip address of the node that will be used for the master process
@@ -47,10 +48,10 @@ wandb login $WANDB_API_KEY
 
 # copy our data to LSCRATCH to run
 start_time=$(date +%s.%N)
-sbcast /ourdisk/hpc/ai2es/luketerry/npy_laion_embeddings/laion_embeddings_shard_0.npy /lscratch/$SLURM_JOBID/embeddings.npy
+sbcast /ourdisk/hpc/ai2es/luketerry/npy_laion_embeddings/laion_embeddings_shard_0-2.npy /lscratch/$SLURM_JOBID/embeddings.npy
 chmod 777 /lscratch/$SLURM_JOBID/embeddings.npy
 mid_time=$(date +%s.%N)
-sbcast /ourdisk/hpc/ai2es/luketerry/npy_laion_embeddings/filenames_shard_0.pkl /lscratch/$SLURM_JOBID/filename-key.npy
+sbcast /ourdisk/hpc/ai2es/luketerry/npy_laion_embeddings/filenames_shard_0-2_set.pkl /lscratch/$SLURM_JOBID/filename-key.npy
 chmod 777 /lscratch/$SLURM_JOBID/filename-key.npy
 end_time=$(date +%s.%N)
 t1=$(echo "scale=9; $mid_time - $start_time" | bc)
@@ -59,7 +60,13 @@ ls /lscratch/$SLURM_JOBID/
 echo "Time spent moving embeddings: $t1 seconds"
 echo "Time spent moving filename key: $t2 seconds"
 
+# cp -r /ourdisk/hpc/ai2es/luketerry/${trial} /lscratch/$SLURM_JOBID/${trial}
+
 mkdir /scratch/luketerry/$SLURM_JOBID
+
+# block_size=$(($SLURM_ARRAY_TASK_ID * 1000))
+block_size=200000000
+echo "BLOCK SIZE $block_size"
 
 # launching a run that will be executed over multiple compute nodes
 echo $SLURM_GPUS_PER_NODE
@@ -75,7 +82,8 @@ main.py \
 --world_size="$SLURM_JOB_NUM_NODES" \
 --cluster_set="${trial}" \
 --path_to_stored_metrics="/ourdisk/hpc/ai2es/luketerry/metrics" \
---base_path="/ourdisk/hpc/ai2es/luketerry" \
+--base_path="/ourdisk/hpc/ai2es/luketerry/" \
 --embeddings_path="/lscratch/$SLURM_JOBID/embeddings.npy" \
 --filename_key_path="/lscratch/$SLURM_JOBID/filename-key.npy" \
---filepath_origin="/lscratch/$SLURM_JOBID"
+--filepath_origin="/lscratch/$SLURM_JOBID" \
+--block_size="$block_size"

@@ -84,7 +84,7 @@ def main(config, BASE_PATH, CLUSTER_SET, PATH_TO_STORED_METRICS, KEY_PATH, FILEP
         # calculate the inertia of this level's clusters
         storage_path = f'{PATH_TO_STORED_METRICS}/{CLUSTER_SET}/level{LEVEL}/'
 
-        metrics_calulator = MetricsCalculator(centroids, curr_level_clusters, embeddings_dim, FILEPATH_ORIGIN)
+        metrics_calulator = MetricsCalculator(centroids, curr_level_clusters, embeddings_dim, FILEPATH_ORIGIN, config['block_size'])
 
         inertia_tensor = metrics_calulator.inertia()
 
@@ -203,6 +203,7 @@ if __name__=="__main__":
     parser.add_argument("--wandb_name", type=str, help="wandb run name", default="no name passed")
     parser.add_argument("--filename_key_path", type=str, help="path to file which contains filenames that embeddings correspond to", default="no name passed")
     parser.add_argument("--filepath_origin", type=str, help="path where the very large distance matrix should be stored", default="no name passed")
+    parser.add_argument("--block_size", type=int, help="size of computation blocks to use", default=10000)
 
 
     args, opts = parser.parse_known_args()
